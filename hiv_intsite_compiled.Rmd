@@ -1,0 +1,43 @@
+---
+title: "hiv_intsite_compiled"
+author: "Vincent Wu"
+date: "10/3/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load pkgs
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(GenomicRanges)
+library(hiAnnotator)
+library(RColorBrewer)
+library(scales)
+library(fossil)
+library(circlize)
+library(grid)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(ChIPseeker)
+
+source("scripts/hiv_int_helper_fx.R")
+```
+
+# load and merge data files
+```{r}
+df_art <- readRDS("data/df_compiled_1-5.rds")
+df_acute <- readRDS("data/df_compiled_6.rds")
+
+df_compiled <- df_art %>%
+  mutate(exp = "ART-treated") %>%
+  bind_rows(df_acute %>% mutate(exp = "Acute"))
+
+# NOTE: removing chrM sample, likely mappinga artifact.
+df_compiled <- df_compiled %>%
+  filter(seqnames != "chrM")
+```
+
