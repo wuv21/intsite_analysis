@@ -118,11 +118,11 @@ for (p in uniq_patients) {
   
   data.frame(x = test) %>%
     ggplot(aes(x = test)) +
-    geom_density(binwidth = 2, fill = "#CCCCCC", color = "#AAAAAA") +
+    geom_density(fill = "#CCCCCC", color = "#AAAAAA") +
     theme_classic() +
     labs(title = p)
   
-  ggsave(paste("figs/global_overlap_dens", p, ".png", sep = ""), device = "png")
+  ggsave(paste("figs/global_overlap_dens_", p, ".png", sep = ""), device = "png")
 }
 ```
 
