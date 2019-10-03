@@ -39,5 +39,90 @@ df_compiled <- df_art %>%
 # NOTE: removing chrM sample, likely mappinga artifact.
 df_compiled <- df_compiled %>%
   filter(seqnames != "chrM")
+
+# NOTE: remove patients D/E (no paired pbmc)
+df_compiled <- df_compiled %>%
+  filter(!patient_anon %in% c("D", "E"))
+
+gr_compiled <- makeGRangesFromDataFrame(df_compiled,
+                                        keep.extra.columns = TRUE)
+```
+
+# patient-wide simulations
+for each patient
+  pool sites (respects abund)
+  shuffle and bin by original location/cell abund
+  count overlap
+  repeat 10000x
+```{r}
+calc_overlap <- function(ids, bin_index) {
+  abund_ids <- ids[duplicated(ids)]
+  total_count <- 0
+  
+  for (i in abund_ids) {
+    bin_count <- 0
+    for (b in seq(1, length(bin_index) - 1, 2)) {
+      bin <- ids[bin_index[b]:bin_index[b + 1] - 1]
+      
+      if (sum(bin == i) > 0) {
+        bin_count <- bin_count + 1
+      }
+    }
+    
+    if (bin_count >= 2) {
+      total_count <- total_count + 1
+    }
+  }
+  
+  return(total_count)
+}
+
+uniq_patients <- unique(df_compiled$patient_anon)
+for (p in uniq_patients) {
+  trial_df <- df_compiled %>%
+    filter(patient_anon == p) %>%
+    mutate(location_cell = paste(location, cell, sep = "_")) %>%
+    mutate(group_id = group_indices(., location_cell)) %>%
+    arrange(group_id)
+  
+  bin_index <- which(!duplicated(trial_df$group_id))
+  ids <- trial_df$posID
+  weights <- trial_df$abund
+  
+  # make pool with correct abundances
+  pool_ids <- rep(ids, times = floor(weights))
+  
+  # find weights by group
+  g_sum_df <- trial_df %>%
+    group_by(group_id) %>%
+    summarise(g_sum = sum(floor(abund)))
+  
+  weights_grouped <- g_sum_df$g_sum
+  
+  # get expanded bins (bins that account for abundances)
+  bin_index_exp <- c(1, weights_grouped[1])
+  for (i in seq(2, length(weights_grouped) - 1)) {
+    w <- weights_grouped[i]
+    
+    bin_index_exp <- c(bin_index_exp, bin_index_exp[length(bin_index_exp)] + w)
+  }
+  
+  # calculate overlap
+  act_overlaps <- sum(duplicated(ids))
+  
+  # run simulations for overlap
+  test <- sapply(seq(1, 10000), function(x) {
+    pool_scramble <- sample(pool_ids)
+    calc_overlap(pool_scramble, bin_index_exp)
+  })
+  
+  data.frame(x = test) %>%
+    ggplot(aes(x = test)) +
+    geom_density(binwidth = 2, fill = "#CCCCCC", color = "#AAAAAA") +
+    theme_classic() +
+    labs(title = p)
+  
+  ggsave(paste("figs/global_overlap_dens", p, ".png", sep = ""), device = "png")
+}
 ```
 
