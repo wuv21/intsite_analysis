@@ -3,3 +3,5 @@
 .code/
 data/
 figs/
+.RData
+.Rhistory

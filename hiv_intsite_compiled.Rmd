@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # load pkgs
-```{r}
+```{r, warning=FALSE, message=FALSE}
 library(ggplot2)
 library(tidyverse)
 library(GenomicRanges)
@@ -49,11 +49,6 @@ gr_compiled <- makeGRangesFromDataFrame(df_compiled,
 ```
 
 # patient-wide simulations
-for each patient
-  pool sites (respects abund)
-  shuffle and bin by original location/cell abund
-  count overlap
-  repeat 10000x
 ```{r}
 calc_overlap <- function(ids, bin_index) {
   abund_ids <- ids[duplicated(ids)]
@@ -79,6 +74,8 @@ calc_overlap <- function(ids, bin_index) {
 
 uniq_patients <- unique(df_compiled$patient_anon)
 for (p in uniq_patients) {
+  print(paste("Running simulation for", p))
+  
   trial_df <- df_compiled %>%
     filter(patient_anon == p) %>%
     mutate(location_cell = paste(location, cell, sep = "_")) %>%
@@ -116,6 +113,11 @@ for (p in uniq_patients) {
     calc_overlap(pool_scramble, bin_index_exp)
   })
   
+  print(paste("Actual overlaps:", act_overlaps))
+  
+  clone_info <- trial_df %>% filter(abund > 1)
+  print(summary(clone_info$abund))
+  
   data.frame(x = test) %>%
     ggplot(aes(x = test)) +
     geom_density(fill = "#CCCCCC", color = "#AAAAAA") +
@@ -124,5 +126,37 @@ for (p in uniq_patients) {
   
   ggsave(paste("figs/global_overlap_dens_", p, ".png", sep = ""), device = "png")
 }
+```
+
+# compile dataset from published sources
+```{r}
+df <- read.csv("data/20191004_hiris.csv", header = TRUE, stringsAsFactors = FALSE) %>%
+  filter(environment == "in vivo")
+
+pmid_of_interest <- c("15163705", "17262715", "24968937", "25011556")
+
+df_interest <- df %>%
+  filter(pubmed_ids %in% pmid_of_interest) %>%
+  mutate(strand = ifelse(orientation_in_landmark == "", "*",
+                         ifelse(orientation_in_landmark == "F", "+", "-")))
+
+gr_interest <- makeGRangesFromDataFrame(df_interest,
+                                       keep.extra.columns = TRUE,
+                                       seqnames.field = "landmark",
+                                       start.field = "location",
+                                       end.field = "location",
+                                       strand.field = "strand")
+
+gr_interest
+
+ref <- make_ref("reference_hg38.rds")
+gr_interest <- getSitesInFeature(gr_interest, ref, "in_gene")
+gr_interest <- getNearestFeature(gr_interest, ref, "nearest_gene")
+
+data.frame(gr_interest) %>%
+  filter(in_gene != "FALSE") %>%
+  group_by(in_gene) %>%
+  tally() %>%
+  arrange(desc(n))
 ```
 
