@@ -56,9 +56,16 @@ calc_overlap <- function(ids, bin_index) {
   
   for (i in abund_ids) {
     bin_count <- 0
-    for (b in seq(1, length(bin_index) - 1, 2)) {
-      bin <- ids[bin_index[b]:bin_index[b + 1] - 1]
+    for (b in seq(2, length(bin_index) + 1, 1)) {
+      start <- bin_index[b - 1]
       
+      if (b == length(bin_index) + 1) {
+        end <- length(ids)
+      } else {
+        end <- bin_index[b] - 1        
+      }
+      
+      bin <- ids[start:end]
       if (sum(bin == i) > 0) {
         bin_count <- bin_count + 1
       }
@@ -73,6 +80,8 @@ calc_overlap <- function(ids, bin_index) {
 }
 
 uniq_patients <- unique(df_compiled$patient_anon)
+graphs <- list()
+
 for (p in uniq_patients) {
   print(paste("Running simulation for", p))
   
@@ -97,36 +106,51 @@ for (p in uniq_patients) {
   weights_grouped <- g_sum_df$g_sum
   
   # get expanded bins (bins that account for abundances)
-  bin_index_exp <- c(1, weights_grouped[1])
-  for (i in seq(2, length(weights_grouped) - 1)) {
-    w <- weights_grouped[i]
-    
-    bin_index_exp <- c(bin_index_exp, bin_index_exp[length(bin_index_exp)] + w)
-  }
+  # bin_index_exp <- c(1, weights_grouped[1])
+  # for (i in seq(2, length(weights_grouped) - 1)) {
+  #   w <- weights_grouped[i]
+  #   
+  #   bin_index_exp <- c(bin_index_exp, bin_index_exp[length(bin_index_exp)] + w + 1)
+  # }
+  
+  bin_index_exp <- cumsum(weights_grouped)
+  bin_index_exp <- bin_index_exp[-length(bin_index_exp)] + 1
+  bin_index_exp <- c(1, bin_index_exp)
   
   # calculate overlap
   act_overlaps <- sum(duplicated(ids))
   
   # run simulations for overlap
-  test <- sapply(seq(1, 10000), function(x) {
+  test <- sapply(seq(1, 1000), function(x) {
     pool_scramble <- sample(pool_ids)
     calc_overlap(pool_scramble, bin_index_exp)
   })
   
-  print(paste("Actual overlaps:", act_overlaps))
+  weights_grouped
   
-  clone_info <- trial_df %>% filter(abund > 1)
-  print(summary(clone_info$abund))
+  # print(paste("Actual overlaps:", act_overlaps))
   
-  data.frame(x = test) %>%
-    ggplot(aes(x = test)) +
+  # clone_info <- trial_df %>% filter(abund > 1)
+  # print(summary(clone_info$abund))
+  
+  g_df <-  data.frame(x = test)
+  
+  g <- ggplot(data = g_df, aes(x = test)) +
+    # geom_histogram(fill = "#CCCCCC", color = "#AAAAAA") +
     geom_density(fill = "#CCCCCC", color = "#AAAAAA") +
     theme_classic() +
     labs(title = p)
   
-  ggsave(paste("figs/global_overlap_dens_", p, ".png", sep = ""), device = "png")
+  graphs[[p]] <- g
+    
+  ggsave(filename = paste("figs/global_overlap_dens_", p, ".png", sep = ""),
+         plot = graphs[[p]],
+         device = "png")
 }
+
+# multiplot(plotlist = graphs, cols = 2)
 ```
+
 
 # compile dataset from published sources
 ```{r}
@@ -153,10 +177,36 @@ ref <- make_ref("reference_hg38.rds")
 gr_interest <- getSitesInFeature(gr_interest, ref, "in_gene")
 gr_interest <- getNearestFeature(gr_interest, ref, "nearest_gene")
 
-data.frame(gr_interest) %>%
+df_clonal <- data.frame(gr_interest) %>%
   filter(in_gene != "FALSE") %>%
   group_by(in_gene) %>%
   tally() %>%
   arrange(desc(n))
+
+write.table(df_clonal, "gsea_test.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+```
+
+```{r}
+uniq_sites_dir <- "data/"
+uniq_sites_fn <- list.files(path = uniq_sites_dir,
+                            pattern = "unique_sites.*.csv")
+
+process_uniq_sites <- function(fn) {
+  fn_complete <- paste(uniq_sites_dir, fn, sep = "")
+  
+  f <- read.csv(fn_complete, stringsAsFactors = FALSE) %>%
+    mutate(primer = ifelse(grepl("U3", sampleName), "U3", "U5"))
+  
+  f$new_posid <- sapply(seq_along(f$seqnames), find_bp, df = f)
+  
+  write.csv(x = f,
+            file = paste(uniq_sites_dir, "proc_", fn, sep = ""),
+            quote = FALSE,
+            row.names = FALSE)
+  
+  return(f)
+}
+
+uniq_sites_fn <- lapply(uniq_sites_fn, function(i) {process_uniq_sites(i)})
 ```
 
