@@ -157,7 +157,6 @@ for (p in uniq_patients) {
 # multiplot(plotlist = graphs, cols = 2)
 ```
 
-
 # compile dataset from published sources
 ```{r}
 df <- read.csv("data/20191004_hiris.csv", header = TRUE, stringsAsFactors = FALSE) %>%
@@ -209,8 +208,9 @@ df_art <- df_compiled %>%
 df_sites_meta <- df_art %>%
   group_by(sampleName) %>%
   dplyr::mutate(group_n = n()) %>%
-  dplyr::filter(group_n >= 3) %>%
+  dplyr::filter(group_n >= 10) %>%
   dplyr::ungroup() %>%
+  arrange(sampleName) %>%
   mutate(siteID = row_number(),
          gender = "m") %>%
   data.frame()
@@ -232,7 +232,7 @@ mrcs <- merge(mrcs, df_sites_meta[,c("siteID", "sampleName", "refGenome")])
 mrcs$type <- "match"
 
 mrcs <- merge(mrcs,
-                    df_sites_meta[,c("siteID", "sampleName", "refGenome", "gender")]) %>%
+              df_sites_meta[,c("siteID", "sampleName", "refGenome", "gender")]) %>%
   dplyr::select(-refGenome)
   
 
@@ -374,7 +374,7 @@ sites_mrcs <- getFeatureCounts(sites_mrcs, DNaseI, "DNaseI_count",
                                width=window_size_DNaseI)
 
 sites_to_ROC_ordinary(sites_mrcs,
-                      df_sites_meta[,c("siteID", "sampleName", "refGenome")],
+                      df_sites_meta[, c("siteID", "sampleName", "refGenome")],
                       "heatmaps")
 ```
 
