@@ -17,14 +17,16 @@ library(GenomicRanges)
 library(hiAnnotator)
 library(RColorBrewer)
 library(scales)
-library(fossil)
 library(circlize)
 library(grid)
 library(TxDb.Hsapiens.UCSC.hg38.knownGene)
 library(org.Hs.eg.db)
 library(ChIPseeker)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(hotROCs)
 
 source("scripts/hiv_int_helper_fx.R")
+source("scripts/random_site.R")
 ```
 
 # load and merge data files
@@ -43,6 +45,10 @@ df_compiled <- df_compiled %>%
 # NOTE: remove patients D/E (no paired pbmc)
 df_compiled <- df_compiled %>%
   filter(!patient_anon %in% c("D", "E"))
+
+df_compiled %>%
+  dplyr::select(-patient) %>%
+  saveRDS(file = "data/df_compiled_vincent.rds")
 
 gr_compiled <- makeGRangesFromDataFrame(df_compiled,
                                         keep.extra.columns = TRUE)
@@ -183,30 +189,193 @@ df_clonal <- data.frame(gr_interest) %>%
   tally() %>%
   arrange(desc(n))
 
-write.table(df_clonal, "gsea_test.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(df_clonal,
+            "historical_art_intsites.tsv",
+            sep = "\t",
+            row.names = FALSE,
+            col.names = FALSE,
+            quote = FALSE)
+```
+
+# Try getting MRCs
+```{r}
+df_art <- df_compiled %>%
+  filter(exp == "ART-treated") %>%
+  mutate(refGenome = "hg38",
+         type = "insertion",
+         sampleName = paste(patient, cell, location, sep = "_"),
+         position = as.numeric(str_extract(posID, "(?<=[+-])(\\d*$)")))
+
+df_sites_meta <- df_art %>%
+  group_by(sampleName) %>%
+  dplyr::mutate(group_n = n()) %>%
+  dplyr::filter(group_n >= 3) %>%
+  dplyr::ungroup() %>%
+  mutate(siteID = row_number(),
+         gender = "m") %>%
+  data.frame()
+  # filter(sampleName %in% c("MAR_CD69+_Tonsil", "GMCB_Tem_PBMC", "MAR_CD69-_Tonsil", "MAR_Tem_PBMC")) %>%
+
+keepBSgenomeSequences <- function(genome, seqnames) {
+    stopifnot(all(seqnames %in% seqnames(genome)))
+    genome@user_seqnames <- setNames(seqnames, seqnames)
+    genome@seqinfo <- genome@seqinfo[seqnames]
+    genome
+}
+
+hg38 <- BSgenome.Hsapiens.UCSC.hg38
+sequences_to_keep <- paste0("chr", c(1:22, "X", "Y"))
+hg38 <- keepBSgenomeSequences(hg38, sequences_to_keep)
+
+mrcs <- get_N_MRCs(df_sites_meta %>% dplyr::select(siteID, gender), hg38)
+mrcs <- merge(mrcs, df_sites_meta[,c("siteID", "sampleName", "refGenome")])
+mrcs$type <- "match"
+
+mrcs <- merge(mrcs,
+                    df_sites_meta[,c("siteID", "sampleName", "refGenome", "gender")]) %>%
+  dplyr::select(-refGenome)
+  
+
+sites <- df_sites_meta %>%
+  dplyr::rename(chr = seqnames) %>% 
+  dplyr::select(siteID, sampleName, gender, chr, strand, position, type)
+
+sites_mrcs <- rbind(sites, mrcs) %>%
+  mutate(position = as.numeric(position))
+
+sites_mrcs <- makeGRanges(sites_mrcs,
+                          soloStart=TRUE,
+                          chromCol='chr',
+                          strandCol='strand',
+                          startCol='position')
+
+newSeqInfo <- seqinfo(hg38)
+seqInfo.new2old <- match(seqnames(newSeqInfo), seqnames(seqinfo(sites_mrcs)))
+seqinfo(sites_mrcs, new2old=seqInfo.new2old) <- newSeqInfo
 ```
 
 ```{r}
-uniq_sites_dir <- "data/"
-uniq_sites_fn <- list.files(path = uniq_sites_dir,
-                            pattern = "unique_sites.*.csv")
+source("scripts/genomicHeatmapMaker_vincent.R")
+reference_genome <- "hg38"
 
-process_uniq_sites <- function(fn) {
-  fn_complete <- paste(uniq_sites_dir, fn, sep = "")
+refseq_rds <- "rds/hg38.refSeq.rds"
+if (!file.exists(refseq_rds)) {
+  refSeq_genes <- getRefSeq_genes(reference_genome)
+  # refSeq_genes <- keepStandardChromosomes(refSeq_genes, pruning.mode = "coarse")
+  # seqinfo(refSeq_genes) <- seqinfo(hg38)
   
-  f <- read.csv(fn_complete, stringsAsFactors = FALSE) %>%
-    mutate(primer = ifelse(grepl("U3", sampleName), "U3", "U5"))
-  
-  f$new_posid <- sapply(seq_along(f$seqnames), find_bp, df = f)
-  
-  write.csv(x = f,
-            file = paste(uniq_sites_dir, "proc_", fn, sep = ""),
-            quote = FALSE,
-            row.names = FALSE)
-  
-  return(f)
+  saveRDS(refSeq_genes, refseq_rds)
+} else {
+  refSeq_genes <- readRDS(refseq_rds)
 }
 
-uniq_sites_fn <- lapply(uniq_sites_fn, function(i) {process_uniq_sites(i)})
+cpg_rds <- "rds/hg38.cpg.rds"
+if (!file.exists(cpg_rds)) {
+  CpG_islands <- get_cpg(reference_genome, hg38)
+  
+  saveRDS(CpG_islands, cpg_rds)
+} else {
+  CpG_islands <- readRDS(cpg_rds)
+}
+
+oncogenes <- get_oncogene_from_file("scripts/allonco_no_pipes.csv")
+
+stability_regions <- readRDS("scripts/fragileRegions.hg38.rds")
+
+fragile_regions <- stability_regions[
+  stability_regions$regionType == "aCFR"]
+non_fragile_regions <- stability_regions[
+  stability_regions$regionType == "NFR"]
+
+window_size_fragReg <- c("1M"=1e6)
+
+sites_mrcs <- getFeatureCounts(
+  sites_mrcs, non_fragile_regions, "NFR", width = window_size_fragReg)
+sites_mrcs <- getFeatureCounts(
+  sites_mrcs, fragile_regions, "aCFR", width = window_size_fragReg)
+
+# is there oncogene closer than 50k
+refSeq_gene_symbols <- refSeq_genes$name2
+#' check if gene is onco gene list(curated by Bushman's lab)
+#' @return TRUE if onco-gene FALSE if not
+is_onco_gene <- function(gene_symbol_sites, oncogenes) {
+    toupper(gene_symbol_sites) %in% toupper(oncogenes)
+}
+is_refSeq_oncogene <- is_onco_gene(refSeq_gene_symbols, oncogenes)
+refSeq_oncogene <- refSeq_genes[is_refSeq_oncogene]
+sites_mrcs <- getNearestFeature(
+  sites_mrcs, refSeq_oncogene, dists.only=TRUE, colnam="onco")
+#sites_mrcs, refSeq_oncogene, dists.only=TRUE, colnam="onco.100k")
+sites_mrcs$onco.100k <- abs(sites_mrcs$oncoDist) <= 50000
+sites_mrcs$oncoDist <- NULL
+# end oncogene
+
+# need within_refSeq_gene for getPositionalValuesOfFeature
+sites_mrcs <- getSitesInFeature(
+  sites_mrcs, refSeq_genes, "within_refSeq_gene", asBool=TRUE)
+
+sites_mrcs <- getPositionalValuesOfFeature(sites_mrcs, refSeq_genes)
+
+# redo the work to move it after positional values 
+mcols(sites_mrcs)$within_refSeq_gene <- NULL
+sites_mrcs <- getSitesInFeature(
+  sites_mrcs, refSeq_genes, "within_refSeq_gene", asBool=TRUE)
+
+window_size_refSeq <- c("10k"=1e4, "100k"=1e5, "1M"=1e6)
+sites_mrcs <- getFeatureCounts(sites_mrcs, refSeq_genes, "refSeq_counts", 
+                               width=window_size_refSeq)
+
+window_size_GC <- c("100"=100, 
+    "1k"=1000, "10k"=1e4, "100k"=1e5, "1M"=1e6)
+sites_mrcs <- getGCpercentage(
+  sites_mrcs, "GC", window_size_GC, hg38)
+
+window_size_CpG_counts <- c("1k"=1e3, "10k"=1e4)
+sites_mrcs <- getFeatureCounts(sites_mrcs, CpG_islands, "CpG_counts", 
+                               width=window_size_CpG_counts)
+
+window_size_CpG_density <- c("10k"=1e4, "100k"=1e5, "1M"=1e6)
+sites_mrcs <- getFeatureCounts(sites_mrcs, CpG_islands, "CpG_density", 
+                               width=window_size_CpG_density)
+sites_mrcs <- from_counts_to_density(sites_mrcs, 
+                                     "CpG_density", window_size_CpG_density)
+
+
+dnase_rds <- "rds/hg38.dnase.rds"
+if (!file.exists(dnase_rds)) {
+  DNaseI_data <- getUCSCtable(
+    "wgEncodeRegDnaseClustered",
+    "DNase Clusters",
+    freeze = reference_genome)
+          
+  DNaseI_data <- DNaseI_data[
+    DNaseI_data$chrom %in% 
+      seqnames(GenomeInfoDb::seqinfo(hg38)),
+    ]
+  
+  DNaseI <- GenomicRanges::GRanges(
+    seqnames = DNaseI_data$chrom,
+    ranges = IRanges::IRanges(
+      start = DNaseI_data$chromStart, end = DNaseI_data$chromEnd
+    ),
+    strand = "*",
+    seqinfo = GenomeInfoDb::seqinfo(hg38)
+  )
+  
+  mcols(DNaseI) <- DNaseI_data
+  
+  saveRDS(DNaseI, dnase_rds)
+} else {
+  DNaseI <- readRDS(dnase_rds)
+}
+
+window_size_DNaseI <- c("1k"=1e3, "10k"=1e4, "100k"=1e5, "1M"=1e6)
+sites_mrcs <- getFeatureCounts(sites_mrcs, DNaseI, "DNaseI_count", 
+                               width=window_size_DNaseI)
+
+sites_to_ROC_ordinary(sites_mrcs,
+                      df_sites_meta[,c("siteID", "sampleName", "refGenome")],
+                      "heatmaps")
 ```
+
 

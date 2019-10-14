@@ -1,7 +1,10 @@
 .DS_Store/
 .DS_Store
-.code/
+.vscode/
+
+cn_code/
 data/
 figs/
 .RData
 .Rhistory
+heatmaps/
