@@ -189,8 +189,6 @@ annotate_genomic <- function(sites_mrcs, annot_ref) {
   is_refSeq_oncogene <- is_onco_gene(refSeq_gene_symbols, oncogenes)
   refSeq_oncogene <- refSeq_genes[is_refSeq_oncogene]
   
-  print(head(refSeq_gene_symbols))
-  
   sites_mrcs <- getNearestFeature(
     sites_mrcs, refSeq_oncogene, dists.only=TRUE, colnam="onco")
   

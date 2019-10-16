@@ -17,10 +17,10 @@ pull_names <- function(query, prefix) {
 
 
 
-heatmap_to_ggplot2 <- function(heatmap_dir, heatmap_type, metric_order, output_suffix) {
+heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_suffix) {
   stopifnot(heatmap_type %in% c("genomic", "epigenetic"))
   
-  rds <- readRDS(paste0(heatmap_dir, "/roc.res.rds"))
+  rds <- readRDS(heatmap_rds)
   
   roc <- rds[["ROC"]]
   

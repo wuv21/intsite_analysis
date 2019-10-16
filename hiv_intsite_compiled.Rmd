@@ -202,83 +202,97 @@ write.table(df_clonal,
 
 # Genomic Heatmaps
 ```{r}
-# settings for heatmaps and files
-filter_type <- "exp_location_epigenetic_heatmap"
-heatmap_dir <- paste0("heatmaps/", filter_type)
+convert_to_mrc_acceptable <- function(df) {
+  df_new <- df %>%
+    group_by(sampleName) %>%
+    dplyr::mutate(group_n = n()) %>%
+    dplyr::filter(group_n >= 10) %>%
+    dplyr::ungroup() %>%
+    arrange(sampleName) %>%
+    mutate(siteID = row_number(),
+           gender = "m") %>%
+    data.frame()
+  
+  return(df_new)
+}
 
-df_art <- df_compiled %>%
-  # filter(exp == "ART-treated") %>%
+make_heatmaps <- function(df, annot_ref, filter_type) {
+  heatmap_dir <- paste0("heatmaps/", filter_type)
+  heatmap_genomic <- paste0(heatmap_dir, "_genomic")
+  heatmap_epigenetic <- paste0(heatmap_dir, "_epigenetic")
+  
+  df_sites_meta <- convert_to_mrc_acceptable(df)
+  sites_mrcs <- generate_mrcs(df_sites_meta)
+  
+  # make genomic
+  gen_roc_fn <- file.path(heatmap_genomic, "roc.res.rds")
+  if (!file.exists(gen_roc_fn)) {
+    print('making genomic annotations')
+    
+    sites_mrcs_genomic <- annotate_genomic(sites_mrcs, annot_ref)
+    sites_to_ROC_ordinary(sites_mrcs_genomic,
+                          df_sites_meta[, c("siteID", "sampleName", "refGenome")],
+                          heatmap_genomic)
+  }
+  
+  print('making genomic heatmap')
+  gen <- heatmap_to_ggplot2(gen_roc_fn, "genomic", NULL, filter_type)
+  
+  # make epigenetic
+  epi_roc_fn <- file.path(heatmap_epigenetic, "roc.res.rds")
+  if (!file.exists(epi_roc_fn)) {
+    print('making epigenetic annotations')
+    
+    sites_mrcs_epigenetic <- annotate_epigenetic(sites_mrcs, annot_ref)
+    sites_to_ROC_ordinary(sites_mrcs_epigenetic,
+                          df_sites_meta[, c("siteID", "sampleName", "refGenome")],
+                          heatmap_epigenetic)
+  }
+  
+  print('making epigenetic heatmap')
+  epi <- heatmap_to_ggplot2(epi_roc_fn, "epigenetic", histoneorder_for_heatmap, filter_type)
+  
+  return(grid.arrange(gen, epi, nrow = 1))
+}
+
+# settings for heatmaps and files
+annot_ref <- file.path(normalizePath("annot_ref"))
+
+df_pre_mrc <- df_compiled %>%
   mutate(refGenome = "hg38",
          type = "insertion",
          clonal = ifelse(abund > 1, "clonal", "single"),
-         # sampleName = paste(exp, clonal, sep = "_"),
-         sampleName = paste(exp, location, sep = "_"),
          position = as.numeric(str_extract(posID, "(?<=[+-])(\\d*$)")))
 
-df_sites_meta <- df_art %>%
-  group_by(sampleName) %>%
-  dplyr::mutate(group_n = n()) %>%
-  dplyr::filter(group_n >= 10) %>%
-  dplyr::ungroup() %>%
-  arrange(sampleName) %>%
-  mutate(siteID = row_number(),
-         gender = "m") %>%
-  data.frame()
+# exp and location
+df_pre_mrc %>%
+  mutate(sampleName = paste(exp, location, sep = "_")) %>%
+  make_heatmaps(annot_ref, "exp_location")
 
-annot_ref <- file.path(normalizePath("annot_ref"))
 
-sites_mrcs <- generate_mrcs(df_sites_meta)
-sites_mrcs_genomic <- annotate_genomic(sites_mrcs, annot_ref)
 
-sites_to_ROC_ordinary(sites_mrcs_genomic,
-                      df_sites_meta[, c("siteID", "sampleName", "refGenome")],
-                      heatmap_dir)
 
-heatmap_to_ggplot2(heatmap_dir, "genomic", NULL, filter_type)
-```
-
-# Epigenetics heatmap
-```{r}
-histoneorder_for_heatmap <- epigenetic_features()
-histoneorder_for_heatmap <- histoneorder_for_heatmap[!grepl("[-_]", histoneorder_for_heatmap)]
-histoneorder_for_heatmap <- histoneorder_for_heatmap[!grepl("Nucleo", histoneorder_for_heatmap)]
-histoneorder_for_heatmap <- str_sort(histoneorder_for_heatmap, numeric = TRUE)
-
-inoutNuc <- 'yes'
-windows <- c(10000)
-
-todocombos <- expand.grid(setName=unique(sites_mrcs$sampleName),
-                          histones=histoneorder_for_heatmap,
-                          windows=windows,
-                          stringsAsFactors=FALSE)
-
-todocombos$histone_window <- with(todocombos,
-                                  paste(histones, getWindowLabel(windows),sep="."))
-
-todocombos$todo <- TRUE
-rows <- todocombos$todo
-todoHistones <- unique(todocombos$histones[rows])
-todoWindows <- unique(todocombos$windows[rows])
-
-annotPath <- "data/epigeneticData"
-for (f in todoHistones) {
-    message(f)
-  
-    load(file.path(annotPath, paste0(f, ".RData")))
-    if(length(sites) > 1e6) {
-        sites_mrcs <- getFeatureCounts(sites_mrcs, epigenData, f, width=todoWindows,
-                                  doInChunks=TRUE)
-    } else {
-        sites_mrcs <- getFeatureCounts(sites_mrcs, epigenData, f, width=todoWindows)
-    }
-}
-
-sites_to_ROC_ordinary(sites_mrcs,
-                      df_sites_meta[, c("siteID", "sampleName", "refGenome")],
-                      heatmap_dir)
-
-heatmap_to_ggplot2(heatmap_dir, "epigenetic", histoneorder_for_heatmap, filter_type)
-
+# df_sites_meta <- convert_to_mrc_acceptable(df_pre_mrc_custom)
+# 
+# 
+# 
+# sites_mrcs <- generate_mrcs(df_sites_meta)
+# sites_mrcs_genomic <- annotate_genomic(sites_mrcs, annot_ref)
+# 
+# sites_to_ROC_ordinary(sites_mrcs_genomic,
+#                       df_sites_meta[, c("siteID", "sampleName", "refGenome")],
+#                       heatmap_dir)
+# 
+# heatmap_to_ggplot2(heatmap_dir, "genomic", NULL, filter_type)
+# 
+# # epigenetic!
+# sites_mrcs_epigenetic <- annotate_epigenetic(sites_mrcs, annot_ref)
+# 
+# sites_to_ROC_ordinary(sites_mrcs_epigenetic,
+#                       df_sites_meta[, c("siteID", "sampleName", "refGenome")],
+#                       heatmap_dir)
+# 
+# heatmap_to_ggplot2(heatmap_dir, "epigenetic", histoneorder_for_heatmap, filter_type)
 ```
 
 
