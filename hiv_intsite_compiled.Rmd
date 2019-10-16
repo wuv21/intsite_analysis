@@ -19,14 +19,18 @@ library(RColorBrewer)
 library(scales)
 library(circlize)
 library(grid)
+library(gridExtra)
 library(TxDb.Hsapiens.UCSC.hg38.knownGene)
 library(org.Hs.eg.db)
 library(ChIPseeker)
 library(BSgenome.Hsapiens.UCSC.hg38)
 library(hotROCs)
 
-source("scripts/hiv_int_helper_fx.R")
+source("scripts/mrc_generator.R")
+source("scripts/heatmapMaker.R.R")
+source("scripts/epigeneticFeatures.R")
 source("scripts/random_site.R")
+source("scripts/hiv_int_helper_fx.R")
 ```
 
 # load and merge data files
@@ -196,13 +200,19 @@ write.table(df_clonal,
             quote = FALSE)
 ```
 
-# Try getting MRCs
+# Genomic Heatmaps
 ```{r}
+# settings for heatmaps and files
+filter_type <- "exp_location_epigenetic_heatmap"
+heatmap_dir <- paste0("heatmaps/", filter_type)
+
 df_art <- df_compiled %>%
-  filter(exp == "ART-treated") %>%
+  # filter(exp == "ART-treated") %>%
   mutate(refGenome = "hg38",
          type = "insertion",
-         sampleName = paste(patient, cell, location, sep = "_"),
+         clonal = ifelse(abund > 1, "clonal", "single"),
+         # sampleName = paste(exp, clonal, sep = "_"),
+         sampleName = paste(exp, location, sep = "_"),
          position = as.numeric(str_extract(posID, "(?<=[+-])(\\d*$)")))
 
 df_sites_meta <- df_art %>%
@@ -214,168 +224,62 @@ df_sites_meta <- df_art %>%
   mutate(siteID = row_number(),
          gender = "m") %>%
   data.frame()
-  # filter(sampleName %in% c("MAR_CD69+_Tonsil", "GMCB_Tem_PBMC", "MAR_CD69-_Tonsil", "MAR_Tem_PBMC")) %>%
 
-keepBSgenomeSequences <- function(genome, seqnames) {
-    stopifnot(all(seqnames %in% seqnames(genome)))
-    genome@user_seqnames <- setNames(seqnames, seqnames)
-    genome@seqinfo <- genome@seqinfo[seqnames]
-    genome
-}
+annot_ref <- file.path(normalizePath("annot_ref"))
 
-hg38 <- BSgenome.Hsapiens.UCSC.hg38
-sequences_to_keep <- paste0("chr", c(1:22, "X", "Y"))
-hg38 <- keepBSgenomeSequences(hg38, sequences_to_keep)
+sites_mrcs <- generate_mrcs(df_sites_meta)
+sites_mrcs_genomic <- annotate_genomic(sites_mrcs, annot_ref)
 
-mrcs <- get_N_MRCs(df_sites_meta %>% dplyr::select(siteID, gender), hg38)
-mrcs <- merge(mrcs, df_sites_meta[,c("siteID", "sampleName", "refGenome")])
-mrcs$type <- "match"
+sites_to_ROC_ordinary(sites_mrcs_genomic,
+                      df_sites_meta[, c("siteID", "sampleName", "refGenome")],
+                      heatmap_dir)
 
-mrcs <- merge(mrcs,
-              df_sites_meta[,c("siteID", "sampleName", "refGenome", "gender")]) %>%
-  dplyr::select(-refGenome)
-  
-
-sites <- df_sites_meta %>%
-  dplyr::rename(chr = seqnames) %>% 
-  dplyr::select(siteID, sampleName, gender, chr, strand, position, type)
-
-sites_mrcs <- rbind(sites, mrcs) %>%
-  mutate(position = as.numeric(position))
-
-sites_mrcs <- makeGRanges(sites_mrcs,
-                          soloStart=TRUE,
-                          chromCol='chr',
-                          strandCol='strand',
-                          startCol='position')
-
-newSeqInfo <- seqinfo(hg38)
-seqInfo.new2old <- match(seqnames(newSeqInfo), seqnames(seqinfo(sites_mrcs)))
-seqinfo(sites_mrcs, new2old=seqInfo.new2old) <- newSeqInfo
+heatmap_to_ggplot2(heatmap_dir, "genomic", NULL, filter_type)
 ```
 
+# Epigenetics heatmap
 ```{r}
-source("scripts/genomicHeatmapMaker_vincent.R")
-reference_genome <- "hg38"
+histoneorder_for_heatmap <- epigenetic_features()
+histoneorder_for_heatmap <- histoneorder_for_heatmap[!grepl("[-_]", histoneorder_for_heatmap)]
+histoneorder_for_heatmap <- histoneorder_for_heatmap[!grepl("Nucleo", histoneorder_for_heatmap)]
+histoneorder_for_heatmap <- str_sort(histoneorder_for_heatmap, numeric = TRUE)
 
-refseq_rds <- "rds/hg38.refSeq.rds"
-if (!file.exists(refseq_rds)) {
-  refSeq_genes <- getRefSeq_genes(reference_genome)
-  # refSeq_genes <- keepStandardChromosomes(refSeq_genes, pruning.mode = "coarse")
-  # seqinfo(refSeq_genes) <- seqinfo(hg38)
+inoutNuc <- 'yes'
+windows <- c(10000)
+
+todocombos <- expand.grid(setName=unique(sites_mrcs$sampleName),
+                          histones=histoneorder_for_heatmap,
+                          windows=windows,
+                          stringsAsFactors=FALSE)
+
+todocombos$histone_window <- with(todocombos,
+                                  paste(histones, getWindowLabel(windows),sep="."))
+
+todocombos$todo <- TRUE
+rows <- todocombos$todo
+todoHistones <- unique(todocombos$histones[rows])
+todoWindows <- unique(todocombos$windows[rows])
+
+annotPath <- "data/epigeneticData"
+for (f in todoHistones) {
+    message(f)
   
-  saveRDS(refSeq_genes, refseq_rds)
-} else {
-  refSeq_genes <- readRDS(refseq_rds)
+    load(file.path(annotPath, paste0(f, ".RData")))
+    if(length(sites) > 1e6) {
+        sites_mrcs <- getFeatureCounts(sites_mrcs, epigenData, f, width=todoWindows,
+                                  doInChunks=TRUE)
+    } else {
+        sites_mrcs <- getFeatureCounts(sites_mrcs, epigenData, f, width=todoWindows)
+    }
 }
-
-cpg_rds <- "rds/hg38.cpg.rds"
-if (!file.exists(cpg_rds)) {
-  CpG_islands <- get_cpg(reference_genome, hg38)
-  
-  saveRDS(CpG_islands, cpg_rds)
-} else {
-  CpG_islands <- readRDS(cpg_rds)
-}
-
-oncogenes <- get_oncogene_from_file("scripts/allonco_no_pipes.csv")
-
-stability_regions <- readRDS("scripts/fragileRegions.hg38.rds")
-
-fragile_regions <- stability_regions[
-  stability_regions$regionType == "aCFR"]
-non_fragile_regions <- stability_regions[
-  stability_regions$regionType == "NFR"]
-
-window_size_fragReg <- c("1M"=1e6)
-
-sites_mrcs <- getFeatureCounts(
-  sites_mrcs, non_fragile_regions, "NFR", width = window_size_fragReg)
-sites_mrcs <- getFeatureCounts(
-  sites_mrcs, fragile_regions, "aCFR", width = window_size_fragReg)
-
-# is there oncogene closer than 50k
-refSeq_gene_symbols <- refSeq_genes$name2
-#' check if gene is onco gene list(curated by Bushman's lab)
-#' @return TRUE if onco-gene FALSE if not
-is_onco_gene <- function(gene_symbol_sites, oncogenes) {
-    toupper(gene_symbol_sites) %in% toupper(oncogenes)
-}
-is_refSeq_oncogene <- is_onco_gene(refSeq_gene_symbols, oncogenes)
-refSeq_oncogene <- refSeq_genes[is_refSeq_oncogene]
-sites_mrcs <- getNearestFeature(
-  sites_mrcs, refSeq_oncogene, dists.only=TRUE, colnam="onco")
-#sites_mrcs, refSeq_oncogene, dists.only=TRUE, colnam="onco.100k")
-sites_mrcs$onco.100k <- abs(sites_mrcs$oncoDist) <= 50000
-sites_mrcs$oncoDist <- NULL
-# end oncogene
-
-# need within_refSeq_gene for getPositionalValuesOfFeature
-sites_mrcs <- getSitesInFeature(
-  sites_mrcs, refSeq_genes, "within_refSeq_gene", asBool=TRUE)
-
-sites_mrcs <- getPositionalValuesOfFeature(sites_mrcs, refSeq_genes)
-
-# redo the work to move it after positional values 
-mcols(sites_mrcs)$within_refSeq_gene <- NULL
-sites_mrcs <- getSitesInFeature(
-  sites_mrcs, refSeq_genes, "within_refSeq_gene", asBool=TRUE)
-
-window_size_refSeq <- c("10k"=1e4, "100k"=1e5, "1M"=1e6)
-sites_mrcs <- getFeatureCounts(sites_mrcs, refSeq_genes, "refSeq_counts", 
-                               width=window_size_refSeq)
-
-window_size_GC <- c("100"=100, 
-    "1k"=1000, "10k"=1e4, "100k"=1e5, "1M"=1e6)
-sites_mrcs <- getGCpercentage(
-  sites_mrcs, "GC", window_size_GC, hg38)
-
-window_size_CpG_counts <- c("1k"=1e3, "10k"=1e4)
-sites_mrcs <- getFeatureCounts(sites_mrcs, CpG_islands, "CpG_counts", 
-                               width=window_size_CpG_counts)
-
-window_size_CpG_density <- c("10k"=1e4, "100k"=1e5, "1M"=1e6)
-sites_mrcs <- getFeatureCounts(sites_mrcs, CpG_islands, "CpG_density", 
-                               width=window_size_CpG_density)
-sites_mrcs <- from_counts_to_density(sites_mrcs, 
-                                     "CpG_density", window_size_CpG_density)
-
-
-dnase_rds <- "rds/hg38.dnase.rds"
-if (!file.exists(dnase_rds)) {
-  DNaseI_data <- getUCSCtable(
-    "wgEncodeRegDnaseClustered",
-    "DNase Clusters",
-    freeze = reference_genome)
-          
-  DNaseI_data <- DNaseI_data[
-    DNaseI_data$chrom %in% 
-      seqnames(GenomeInfoDb::seqinfo(hg38)),
-    ]
-  
-  DNaseI <- GenomicRanges::GRanges(
-    seqnames = DNaseI_data$chrom,
-    ranges = IRanges::IRanges(
-      start = DNaseI_data$chromStart, end = DNaseI_data$chromEnd
-    ),
-    strand = "*",
-    seqinfo = GenomeInfoDb::seqinfo(hg38)
-  )
-  
-  mcols(DNaseI) <- DNaseI_data
-  
-  saveRDS(DNaseI, dnase_rds)
-} else {
-  DNaseI <- readRDS(dnase_rds)
-}
-
-window_size_DNaseI <- c("1k"=1e3, "10k"=1e4, "100k"=1e5, "1M"=1e6)
-sites_mrcs <- getFeatureCounts(sites_mrcs, DNaseI, "DNaseI_count", 
-                               width=window_size_DNaseI)
 
 sites_to_ROC_ordinary(sites_mrcs,
                       df_sites_meta[, c("siteID", "sampleName", "refGenome")],
-                      "heatmaps")
+                      heatmap_dir)
+
+heatmap_to_ggplot2(heatmap_dir, "epigenetic", histoneorder_for_heatmap, filter_type)
+
 ```
+
 
 

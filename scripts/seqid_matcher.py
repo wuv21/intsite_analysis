@@ -3,8 +3,12 @@ import pprint
 import os
 import gzip
 from collections import Counter
+import json
 
 from Bio import SeqIO
+from Bio.SeqRecord import SeqRecord
+from Bio.Seq import Seq
+from Bio.Alphabet import generic_dna
 
 def get_sites(r):
     recs = {}
@@ -37,6 +41,32 @@ def get_fq_ids(r, recs):
 
     return(recs)
 
+def scan_fastq(recs, fastq_dir):
+    for rep in recs:
+        print("working on", rep)
+
+        gz_fn = os.path.join(dirname, fastq_dir, + str(rep) + ".R2.fastq.gz")
+        with gzip.open(gz_fn, "rt") as handle:
+            fq = SeqIO.to_dict(SeqIO.parse(handle, "fastq"))
+
+            for site in recs[rep]:
+                if "U5" in rep:
+                    end = 69
+                else:
+                    end = 62
+
+                c = Counter()
+                for i in recs[rep][site]["ids"]:
+                    seq = fq[i].seq[0:end]
+                    c.update({str(seq): 1})
+
+                recs[rep][site]["seq"] = c.most_common(1)[0]
+
+    with open(counted_json, "w") as output:
+        json.dump(recs, output)
+
+    return(recs)
+
 def main():
     dirname = os.path.dirname(__file__)
     fn = os.path.join(dirname, "../data/raw_xofil_df_acute.csv")
@@ -54,21 +84,40 @@ def main():
 
         recs = get_fq_ids(r, recs)
 
-    for rep in recs:
-        print(rep)
-
-        gz_fn = os.path.join(dirname, "../data/fastq_gz/" + str(rep) + ".R2.filt.fastq.gz")
-        with gzip.open(gz_fn, "rt") as handle:
-            fq = SeqIO.to_dict(SeqIO.parse(handle, "fastq"))
-
+    counted_json = "ltr_mapped.json"
+    if os.path.exists(counted_json):
+        with open(counted_json, "r") as cj:
+            recs = json.load(cj)
+        
+        for rep in recs:
             for site in recs[rep]:
-                c = Counter()
-                for i in recs[rep][site]["ids"]:
-                    seq = fq[i].seq
-                    c.update({str(seq): 1})
+                del recs[rep][site]["ids"]
+        
+        # pprint.pprint(recs)
 
-                pprint.pprint(c)
-        break
+    else:
+        print("scanning fastq gz files and getting LTR sequences")
+        recs = scan_fastq(recs, "../data/fastq_gz/")
+
+    # convert dict to fasta file
+    u3_fasta = []
+    u5_fasta = []
+    for rep in recs:
+        for site in recs[rep]:
+            rec = "_".join([rep, site])
+            seq = Seq(recs[rep][site]['seq'][0], generic_dna)
+            seqrec = SeqRecord(seq, id = rec, description = "")
+
+            if "U3" in rep:
+                u3_fasta.append(seqrec)
+            else:
+                u5_fasta.append(seqrec)
+
+    with open("ltr_only_u3.fa", "w") as outfile:
+        SeqIO.write(u3_fasta, outfile, "fasta")
+    
+    with open("ltr_only_u5.fa", "w") as outfile:
+        SeqIO.write(u5_fasta, outfile, "fasta")
 
 main()
 

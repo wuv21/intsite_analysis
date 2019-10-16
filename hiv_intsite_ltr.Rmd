@@ -13,18 +13,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, warning=FALSE, message=FALSE}
 library(ggplot2)
 library(tidyverse)
-library(GenomicRanges)
-library(hiAnnotator)
-library(RColorBrewer)
-library(scales)
-library(fossil)
-library(circlize)
-library(grid)
-library(TxDb.Hsapiens.UCSC.hg38.knownGene)
-library(org.Hs.eg.db)
-library(ChIPseeker)
 
-source("scripts/hiv_int_helper_fx.R")
+library(ape)
+library(phangorn)
 ```
 
 ```{r}
@@ -89,5 +80,30 @@ write.csv(raw_xofil_df,
           file = "data/raw_xofil_df_acute.csv",
           row.names = FALSE,
           quote = FALSE)
+```
+
+
+```{r}
+ltrs <- read.dna(file = "ltr_only_u5.fa", format = "fasta")
+ltrs_phydat <- phyDat(ltrs, type = "DNA")
+
+ltrs_smol <- subset(ltrs_phydat, 1:50)
+# model <- modelTest(ltrs_smol)
+
+# choosing on smallest bic
+# bestmodel <- model$Model[which.min(model$BIC)]
+dna_dist <- dist.ml(ltrs_phydat, model = "JC69")
+tree <- NJ(dna_dist)
+
+fit <- pml(tree, ltrs_phydat)
+fitJC <- optim.pml(fit, model = "JC", rearrangement = "stochastic")
+
+logLik(fitJC)
+bs <- bootstrap.pml(fitJC, bs=100, optNni=TRUE, multicore=TRUE, control = pml.control(trace=0))
+plotBS(midpoint(fitJC$tree), bs, p = 50, type="p")
+
+write.tree(bs, file="bootstrap_example.tre")
+
+plot(tree)
 ```
 
