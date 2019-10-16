@@ -252,7 +252,7 @@ make_heatmaps <- function(df, annot_ref, filter_type) {
   print('making epigenetic heatmap')
   epi <- heatmap_to_ggplot2(epi_roc_fn, "epigenetic", histoneorder_for_heatmap, filter_type)
   
-  return(grid.arrange(gen, epi, nrow = 1))
+  return("finished")
 }
 
 # settings for heatmaps and files
