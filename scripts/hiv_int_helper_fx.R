@@ -136,10 +136,16 @@ draw_chord <- function(df_chord, uniq_cells, cell_colors, abund_scale) {
              canvas.xlim = c(-1.75, 1.75), canvas.xlim = c(-1.75, 1.75))
   
   circos.initialize(factors, xlim = c(0, 25))
+  
+  # for sample_cell
   circos.track(ylim = c(0, 1),
                track.height = 0.1,
-               bg.col = "#dddddd")
+               bg.border = df_chord$cell_track_color)
   
+  # sites
+  circos.track(ylim = c(1, 2),
+               track.height = 0.1,
+               bg.border = df_chord$abund_color)
   
   uniq <- !duplicated(df_chord$sample_cell)  ## logical vector of unique values 
   uniq_idx <- seq_along(df_chord$sample_cell)[uniq]  ## indices 
@@ -180,28 +186,39 @@ draw_chord <- function(df_chord, uniq_cells, cell_colors, abund_scale) {
     
     se <- c(df_row$from_posID, df_row$uniq_posID)
     circos.link(se[1],
-                c(2, 0),
+                0,
                 se[2],
-                c(5, 1),
-                lwd = 3,
+                0,
+                lwd = 2,
                 col = "#000000")
-  }
-  
-  # label more abundant clones
-  df_abundant <- df_chord %>%
-    dplyr::filter(abund >= 2)
-  
-  for (i in seq_along(df_abundant$gene_plot)) {
-    df_row <- df_abundant[i, ]
+    
     
     highlight.sector(c(df_row$from_posID: df_row$from_posID),
                      track.index = 1,
-                     text = df_row$gene_plot_noid,
+                     text = df_row$geneplot_posID,
+                     col = "#FFFFFFFF",
                      facing = "clockwise",
-                     niceFacing = TRUE,
-                     text.vjust = "55mm",
-                     cex = 3)
+                     # niceFacing = TRUE,
+                     text.vjust = "45mm",
+                     cex = 1.5)
   }
+  
+  # label more abundant clones
+  # df_abundant <- df_chord %>%
+  #   dplyr::filter(abund >= 2)
+  # 
+  # for (i in seq_along(df_abundant$gene_plot)) {
+  #   df_row <- df_abundant[i, ]
+  #   
+  #   highlight.sector(c(df_row$from_posID: df_row$from_posID),
+  #                    track.index = 1,
+  #                    text = df_row$gene_plot_noid,
+  #                    col = "#FFFFFFFF",
+  #                    facing = "clockwise",
+  #                    niceFacing = TRUE,
+  #                    text.vjust = "40mm",
+  #                    cex = 1.5)
+  # }
   
   circos.clear()
 }
@@ -293,51 +310,4 @@ pairwise_stat_pool <- function(df_pair, p) {
     geom_vline(data = df_sim_act, aes(xintercept = act), color = "#0008ff")
   
   return(g)
-}
-
-
-# Multiple plot function
-#
-# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
-# - cols:   Number of columns in layout
-# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
-#
-# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
-# then plot 1 will go in the upper left, 2 will go in the upper right, and
-# 3 will go all the way across the bottom.
-#
-multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
-  library(grid)
-  
-  # Make a list from the ... arguments and plotlist
-  plots <- c(list(...), plotlist)
-  
-  numPlots = length(plots)
-  
-  # If layout is NULL, then use 'cols' to determine layout
-  if (is.null(layout)) {
-    # Make the panel
-    # ncol: Number of columns of plots
-    # nrow: Number of rows needed, calculated from # of cols
-    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
-                     ncol = cols, nrow = ceiling(numPlots/cols))
-  }
-  
-  if (numPlots==1) {
-    print(plots[[1]])
-    
-  } else {
-    # Set up the page
-    grid.newpage()
-    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
-    
-    # Make each plot, in the correct location
-    for (i in 1:numPlots) {
-      # Get the i,j matrix positions of the regions that contain this subplot
-      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
-      
-      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
-                                      layout.pos.col = matchidx$col))
-    }
-  }
 }

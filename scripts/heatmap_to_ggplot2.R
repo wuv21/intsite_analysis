@@ -13,19 +13,17 @@ pull_names <- function(query, prefix) {
   return(to_num)
 }
 
-
-
-
-
 heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_suffix) {
   stopifnot(heatmap_type %in% c("genomic", "epigenetic"))
   
   rds <- readRDS(heatmap_rds)
   
   roc <- rds[["ROC"]]
+  pval <- rds$pvalues$np
   
   if (heatmap_type == "epigenetic") {
     rownames(roc) <- gsub("\\.10Kb", "", rownames(roc))
+    rownames(pval) <- gsub("\\.10Kb", "", rownames(pval))
     
     scale_low <- "purple"
     scale_hi <- "green"
@@ -45,6 +43,15 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
     scale_hi <- "red"
   }
   
+  pval <- data.frame(pval[rownames(pval) %in% metric_order, ],
+                     check.names = FALSE)
+  
+  pval$y <- rownames(pval)
+  pval <- pval %>%
+    gather(sampleName, np_val, -y) %>%
+    mutate(y = factor(y, levels = rev(metric_order)),
+           np_val = as.numeric(np_val))
+  
   df <- data.frame(roc[rownames(roc) %in% metric_order, ],
                    check.names = FALSE)
   
@@ -53,8 +60,14 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
     gather(sampleName, roc, -y) %>%
     mutate(y = factor(y, levels = rev(metric_order)))
   
+  df <- left_join(df, pval, by = c("y", "sampleName")) %>%
+    mutate(pval_lbl = ifelse(np_val < 0.001, "***",
+                             ifelse(np_val < 0.01, "**",
+                                    ifelse(np_val < 0.05, "*", ""))))
+  
   graph_settings <- list(
     geom_tile(aes(fill = roc), color = "#222222", size = 0.5),
+    geom_text(aes(label = pval_lbl)),
     scale_fill_gradient2(low = scale_low,
                          high = scale_hi,
                          mid = "white",
@@ -70,6 +83,7 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
   if (heatmap_type == "genomic") {
     g <- ggplot(df, aes(x = sampleName, y = y)) +
       graph_settings
+    
   } else {
     level_mid <- ceiling(length(levels(df$y)) / 2)
     

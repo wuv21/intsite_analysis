@@ -264,12 +264,7 @@ annotate_genomic <- function(sites_mrcs, annot_ref) {
   return(sites_mrcs)
 }
 
-annotate_epigenetic <- function(sites_mrcs, annot_ref) {
-  histoneorder_for_heatmap <- epigenetic_features()
-  histoneorder_for_heatmap <- histoneorder_for_heatmap[!grepl("[-_]", histoneorder_for_heatmap)]
-  histoneorder_for_heatmap <- histoneorder_for_heatmap[!grepl("Nucleo", histoneorder_for_heatmap)]
-  histoneorder_for_heatmap <- str_sort(histoneorder_for_heatmap, numeric = TRUE)
-  
+annotate_epigenetic <- function(sites_mrcs, annot_ref, histoneorder_for_heatmap) {
   inoutNuc <- 'yes'
   windows <- c(10000)
   

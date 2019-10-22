@@ -25,11 +25,13 @@ library(org.Hs.eg.db)
 library(ChIPseeker)
 library(BSgenome.Hsapiens.UCSC.hg38)
 library(hotROCs)
+library(reshape2)
 
 source("scripts/mrc_generator.R")
-source("scripts/heatmapMaker.R.R")
+source("scripts/heatmapMaker.R")
 source("scripts/epigeneticFeatures.R")
 source("scripts/random_site.R")
+source("scripts/heatmap_to_ggplot2.R")
 source("scripts/hiv_int_helper_fx.R")
 ```
 
@@ -57,6 +59,7 @@ df_compiled %>%
 gr_compiled <- makeGRangesFromDataFrame(df_compiled,
                                         keep.extra.columns = TRUE)
 ```
+
 
 # patient-wide simulations
 ```{r}
@@ -92,6 +95,9 @@ calc_overlap <- function(ids, bin_index) {
 uniq_patients <- unique(df_compiled$patient_anon)
 graphs <- list()
 
+# p <- "B"
+
+graphs <- list()
 for (p in uniq_patients) {
   print(paste("Running simulation for", p))
   
@@ -115,14 +121,6 @@ for (p in uniq_patients) {
   
   weights_grouped <- g_sum_df$g_sum
   
-  # get expanded bins (bins that account for abundances)
-  # bin_index_exp <- c(1, weights_grouped[1])
-  # for (i in seq(2, length(weights_grouped) - 1)) {
-  #   w <- weights_grouped[i]
-  #   
-  #   bin_index_exp <- c(bin_index_exp, bin_index_exp[length(bin_index_exp)] + w + 1)
-  # }
-  
   bin_index_exp <- cumsum(weights_grouped)
   bin_index_exp <- bin_index_exp[-length(bin_index_exp)] + 1
   bin_index_exp <- c(1, bin_index_exp)
@@ -131,35 +129,236 @@ for (p in uniq_patients) {
   act_overlaps <- sum(duplicated(ids))
   
   # run simulations for overlap
-  test <- sapply(seq(1, 1000), function(x) {
+  test <- sapply(seq(1, 10000), function(x) {
     pool_scramble <- sample(pool_ids)
     calc_overlap(pool_scramble, bin_index_exp)
   })
   
-  weights_grouped
+  # weights_grouped
   
-  # print(paste("Actual overlaps:", act_overlaps))
-  
+  print(paste("Actual overlaps:", act_overlaps))
+
   # clone_info <- trial_df %>% filter(abund > 1)
   # print(summary(clone_info$abund))
   
   g_df <-  data.frame(x = test)
-  
-  g <- ggplot(data = g_df, aes(x = test)) +
-    # geom_histogram(fill = "#CCCCCC", color = "#AAAAAA") +
-    geom_density(fill = "#CCCCCC", color = "#AAAAAA") +
-    theme_classic() +
-    labs(title = p)
+  g <- ggplot(data = g_df, aes(x = x)) +
+    geom_vline(xintercept = act_overlaps, color = "#AAAAAA", linetype = "dashed") +
+    stat_ecdf(geom = "step") +
+    expand_limits(x = 0) +
+    # geom_histogram(fill = "#BBBBBB", color = "#AAAAAA", bins = 5) +
+    # geom_density(fill = "#CCCCCC", color = "#AAAAAA") +
+
+    labs(x = "",
+         y = "",
+         title = p) + 
+    theme_classic()
   
   graphs[[p]] <- g
     
-  ggsave(filename = paste("figs/global_overlap_dens_", p, ".png", sep = ""),
+  ggsave(filename = paste("figs/global_overlap_ecdf_", p, ".png", sep = ""),
          plot = graphs[[p]],
-         device = "png")
+         device = "png",
+         width = 4,
+         height = 4)
 }
 
 # multiplot(plotlist = graphs, cols = 2)
 ```
+
+# hotspot graph
+```{r}
+uniq_exp <- unique(df_compiled$exp)
+for (u in uniq_exp) {
+  df_plot_all <- df_compiled %>%
+    filter(exp == u) %>%
+    arrange(desc(location), desc(cell), desc(patient)) %>%
+    mutate(cell_patient = paste(location, cell, patient, sep = "_"),
+           cell_patient = factor(cell_patient),
+           nearest_gene = factor(nearest_gene, levels = unique(nearest_gene)))
+  
+  sim_matrix <- matrix(0L, nrow = length(levels(df_plot_all$cell_patient)),
+                       ncol = length(levels(df_plot_all$nearest_gene)))
+  
+  for (i in seq_along(df_plot_all$cell_patient)) {
+    df_row <- df_plot_all[i, ]
+    
+    row <- as.numeric(df_row$cell_patient)
+    col <- as.numeric(df_row$nearest_gene)
+    
+    if (sim_matrix[row, col] == 0) {
+      sim_matrix[row, col] <- sim_matrix[row, col] + 1
+    }
+  }
+  
+  melted_sim <- melt(sim_matrix) %>%
+    mutate(Var1 = factor(Var1, labels = levels(df_plot_all$cell_patient))) %>%
+    separate(Var1, into = c("sample_type", "cell", "patient"), remove = FALSE, sep = "_") %>%
+    dplyr::filter(value > 0) %>%
+    mutate(Var2 = factor(Var2))
+  
+  cs <- base::colSums(sim_matrix)
+  
+  heatmap_theme <- theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+                         panel.background = element_rect(fill = "#132b43"),
+                         panel.grid.major.y = element_blank(),
+                         panel.grid.minor.y = element_blank(),
+                         panel.grid.major.x = element_blank(),
+                         legend.position = "none")
+                         # axis.text.y = element_text(size = 3)
+  
+  col_of_interest <- which(colSums(sim_matrix) >= 3)
+  
+  ggplot(melted_sim, aes(Var1, Var2, fill = value)) +
+    geom_raster(fill = "#56b1f7") +
+    geom_hline(yintercept = c(col_of_interest), color = "#00ff00", alpha = 0.35) +
+    theme_bw() +
+    labs(title = "Nearest gene overlap across patients across subsets",
+         x = "Cell type - Patient",
+         y = "Gene") +
+    scale_y_discrete(breaks = col_of_interest,
+                     labels = levels(df_plot_all$nearest_gene)[col_of_interest]) + 
+    heatmap_theme
+  
+  ggsave(paste0("figs/", "overlap_", u, ".png"),
+         device = "png", width = 6, height = 9)
+  
+  
+  of_interest <- melted_sim %>%
+    dplyr::filter(Var2 %in% col_of_interest)
+  
+  ggplot(of_interest, aes(Var1, factor(Var2), fill = value)) +
+    geom_raster(fill = "#56b1f7") +
+    scale_y_discrete(breaks = col_of_interest,
+                     labels = levels(df_plot_all$nearest_gene)[col_of_interest]) +
+    theme_bw() +
+    labs(title = "Nearest gene overlap across patients across subsets",
+         subtitle = "(showing genes seen in 3 or more subsets/patients",
+         x = "Cell type - Patient",
+         y = "Gene") +
+    heatmap_theme +
+    coord_equal()
+  
+  ggsave(paste0("figs/", "overlap_hotspot_", u, ".png"),
+         device = "png", width = 6, height = 6)  
+}
+```
+
+# clonal expansion graph
+```{r}
+# combine df
+make_clonal_expansion_graph <- function(df, p, exp_type) {
+  if (exp_type == "Acute") {
+    abund_filter <- 3
+  } else {
+    abund_filter <- 2
+  }
+  
+  df_rel <- df %>%
+    dplyr::filter(patient_anon == p) %>%
+    ungroup() %>%
+    group_by(main_id, cell) %>%
+    mutate(group_abund = sum(abund),
+           rel_abund = abund / group_abund,
+           gene_plot_2 = ifelse(abund < abund_filter, "Low Abundance", gene_plot),
+           x_axis = paste(location, "\n", cell, "\n", "n = ", sum(abund), sep = "")) %>%
+    arrange(desc(rel_abund))
+  
+  uniq_genes <- unique(df_rel$gene_plot_2)
+    
+  df_rel$gene_plot_2 <- factor(df_rel$gene_plot_2,
+                                  levels = c("Low Abundance",
+                                             uniq_genes[uniq_genes != "Low Abundance"]))
+    
+  colors <- hue_pal()(length(uniq_genes))
+  colors[1] <- "#dddddd"
+  
+  g <- ggplot(df_rel, aes(x = x_axis, y = rel_abund, fill = gene_plot_2)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 5),
+        legend.key.width = unit(10, units = "points"),
+        legend.key.height = unit(10, units = "points")) +
+  scale_fill_manual(values = colors) +
+  labs(title = p,
+       x = "Patient and Cell Type (n = total inferred cells)",
+       y = paste0("Relative sonic abund \n(Low Abund < ", abund_filter, " sonic abund)"))
+  
+  ggsave(paste0("figs/", "rel_abund_", p, ".png"),
+         plot = g, device = "png", width = 7, height = 4, bg = "transparent")
+}
+
+uniq_patients <- unique(df_compiled$patient_anon)
+for (p in uniq_patients) {
+  if (startsWith(p, "A_")) {
+    make_clonal_expansion_graph(df_compiled, p, "Acute")
+  } else {
+    make_clonal_expansion_graph(df_compiled, p, "ART-treated")
+  }
+}
+```
+
+# circos plot
+```{r}
+uniq_patients <- unique(df_compiled$patient_anon)
+uniq_cells <- unique(paste(df_compiled$location, df_compiled$cell, sep = "_"))
+cell_colors <- brewer.pal(length(uniq_cells), "Paired")
+max_abund <- max(df_compiled$abund)
+# abund_scale <- colorRampPalette(brewer.pal(9, "Greys")[c(7:9)])(100)
+
+# TODO separate legend by acute and art treated...since number of uniq cells do differ
+
+uniq_patients <- c("A", "B", "C")
+for (p in uniq_patients) {
+  df_chord_test <- df_compiled %>%
+    mutate(sample_cell = factor(paste(location, cell, sep = "_"),
+                                levels = uniq_cells)) %>%
+    dplyr::filter(patient_anon == p) %>%
+    ungroup() %>%
+    arrange(sample_cell) %>%
+    group_by(sample_cell) %>%
+    add_tally(name = "group_n") %>%
+    ungroup() %>%
+    mutate(posID = factor(posID, levels = unique(posID)),
+           geneplot_posID = paste(nearest_gene, posID),
+           from_posID = seq_along(posID),
+           uniq_posID = as.numeric(posID),
+           value = ifelse(duplicated(posID) == TRUE, 1, 0),
+           cell_track_color = ifelse(group_n == 1,
+                                     paste0(cell_colors[sample_cell], "60"),
+                                     "#FFFFFFFF"),
+           abund_color = ifelse(abund >= 2, "#000000", "#CCCCCC"))
+    
+  png(paste("figs/chord_", p, "_new.png", sep = ""),
+      width = 1800, height = 1800, bg = "transparent")
+  
+  # svglite(paste("figs/chord_", p, "new.svg", sep = ""), bg = "transparent")
+  draw_chord(df_chord_test, uniq_cells, cell_colors, abund_scale)
+  dev.off()
+}
+
+
+df_legend <- data.frame(cell_col = cell_colors,
+              cell = factor(uniq_cells, levels = uniq_cells),
+              val = rnorm(length(uniq_cells)))
+
+g <- ggplot(df_legend, aes(x = uniq_cells, y = val, fill = cell)) +
+  geom_bar(stat = "identity", color = "#FFFFFF") +
+  scale_fill_manual(values = paste(cell_colors, "80", sep = "")) +
+  theme(legend.position = "bottom",
+        legend.text = element_text(size = 12)) +
+  guides(fill = guide_legend(override.aes = list(size = 10)))
+
+leg <- cowplot::get_legend(g)
+grid.newpage()
+grid.draw(leg)
+ggsave("figs/chord_legend.svg", device = "svg", width = 8)
+```
+
+
 
 # compile dataset from published sources
 ```{r}
@@ -240,17 +439,27 @@ make_heatmaps <- function(df, annot_ref, filter_type) {
   
   # make epigenetic
   epi_roc_fn <- file.path(heatmap_epigenetic, "roc.res.rds")
+  histoneorder <- epigenetic_features()
+  histoneorder <- histoneorder[!grepl("[-_]", histoneorder)]
+  histoneorder <- histoneorder[!grepl("Nucleo", histoneorder)]
+  histoneorder <- str_sort(histoneorder, numeric = TRUE)
+  
   if (!file.exists(epi_roc_fn)) {
     print('making epigenetic annotations')
     
-    sites_mrcs_epigenetic <- annotate_epigenetic(sites_mrcs, annot_ref)
+
+    
+    sites_mrcs_epigenetic <- annotate_epigenetic(sites_mrcs, annot_ref, histoneorder)
     sites_to_ROC_ordinary(sites_mrcs_epigenetic,
                           df_sites_meta[, c("siteID", "sampleName", "refGenome")],
                           heatmap_epigenetic)
   }
   
   print('making epigenetic heatmap')
-  epi <- heatmap_to_ggplot2(epi_roc_fn, "epigenetic", histoneorder_for_heatmap, filter_type)
+  epi <- heatmap_to_ggplot2(epi_roc_fn, "epigenetic", histoneorder, filter_type)
+  
+  print(gen)
+  print(epi)
   
   return("finished")
 }
@@ -263,37 +472,53 @@ df_pre_mrc <- df_compiled %>%
          type = "insertion",
          clonal = ifelse(abund > 1, "clonal", "single"),
          position = as.numeric(str_extract(posID, "(?<=[+-])(\\d*$)")))
+```
 
+```{r}
 # exp and location
 df_pre_mrc %>%
   mutate(sampleName = paste(exp, location, sep = "_")) %>%
   make_heatmaps(annot_ref, "exp_location")
 
+# exp and location and cell
+df_pre_mrc %>%
+  mutate(sampleName = paste(exp, location, cell, sep = "_")) %>%
+  make_heatmaps(annot_ref, "exp_location_cell")
 
+# exp and clonal
+df_pre_mrc %>%
+  mutate(sampleName = paste(exp, clonal, sep = "_")) %>%
+  make_heatmaps(annot_ref, "exp_clonal")
 
+# exp and location and clonal
+df_pre_mrc %>%
+  mutate(sampleName = paste(exp, location, clonal, sep = "_")) %>%
+  make_heatmaps(annot_ref, "exp_location_clonal")
 
-# df_sites_meta <- convert_to_mrc_acceptable(df_pre_mrc_custom)
-# 
-# 
-# 
-# sites_mrcs <- generate_mrcs(df_sites_meta)
-# sites_mrcs_genomic <- annotate_genomic(sites_mrcs, annot_ref)
-# 
-# sites_to_ROC_ordinary(sites_mrcs_genomic,
-#                       df_sites_meta[, c("siteID", "sampleName", "refGenome")],
-#                       heatmap_dir)
-# 
-# heatmap_to_ggplot2(heatmap_dir, "genomic", NULL, filter_type)
-# 
-# # epigenetic!
-# sites_mrcs_epigenetic <- annotate_epigenetic(sites_mrcs, annot_ref)
-# 
-# sites_to_ROC_ordinary(sites_mrcs_epigenetic,
-#                       df_sites_meta[, c("siteID", "sampleName", "refGenome")],
-#                       heatmap_dir)
-# 
-# heatmap_to_ggplot2(heatmap_dir, "epigenetic", histoneorder_for_heatmap, filter_type)
+# exp
+df_pre_mrc %>%
+  mutate(sampleName = paste(exp, sep = "_")) %>%
+  make_heatmaps(annot_ref, "exp")
+
+# art_only and location and cell
+df_pre_mrc %>%
+  filter(exp == "ART-treated") %>%
+  mutate(sampleName = paste(location, cell, sep = "_")) %>%
+  make_heatmaps(annot_ref, "ARTonly_location_cell")
 ```
 
+# overall stat counts
+```{r}
+df_compiled %>%
+  group_by(exp) %>%
+  summarise(count = n(),
+            abund = sum(abund))
+
+df_compiled %>%
+  group_by(exp) %>%
+  arrange(abund) %>%
+  top_n(5, abund) %>%
+  dplyr::select(exp, abund, gene_plot, in_gene)
+```
 
 
