@@ -304,15 +304,35 @@ for (p in uniq_patients) {
 # circos plot
 ```{r}
 uniq_patients <- unique(df_compiled$patient_anon)
-uniq_cells <- unique(paste(df_compiled$location, df_compiled$cell, sep = "_"))
-cell_colors <- brewer.pal(length(uniq_cells), "Paired")
-max_abund <- max(df_compiled$abund)
-# abund_scale <- colorRampPalette(brewer.pal(9, "Greys")[c(7:9)])(100)
+# uniq_cells <- unique(paste(df_compiled$location, df_compiled$cell, sep = "_"))
+# cell_colors <- brewer.pal(length(uniq_cells), "Paired")
 
-# TODO separate legend by acute and art treated...since number of uniq cells do differ
+df_uniq_cells <- df_compiled %>%
+  mutate(sample_cell = paste(location, cell, sep = "_")) %>%
+  group_by(exp) %>%
+  distinct(sample_cell)
 
-uniq_patients <- c("A", "B", "C")
+df_uniq_cells_art <- df_uniq_cells %>%
+  dplyr::filter(exp == "ART-treated")
+
+df_uniq_cells_acute <- df_uniq_cells %>%
+  dplyr::filter(exp == "Acute")
+
+cell_colors_art <- brewer.pal(length(df_uniq_cells_art$sample_cell), "Paired")
+cell_colors_acute <- brewer.pal(length(df_uniq_cells_acute$sample_cell), "Paired")
+
 for (p in uniq_patients) {
+  if (grepl("_", p)) {
+    cell_colors <- cell_colors_acute
+    uniq_cells <- df_uniq_cells_acute$sample_cell
+    abund_threshold <- 3
+    
+  } else {
+    cell_colors <- cell_colors_art
+    uniq_cells <- df_uniq_cells_art$sample_cell
+    abund_threshold <- 2
+  }
+  
   df_chord_test <- df_compiled %>%
     mutate(sample_cell = factor(paste(location, cell, sep = "_"),
                                 levels = uniq_cells)) %>%
@@ -323,14 +343,13 @@ for (p in uniq_patients) {
     add_tally(name = "group_n") %>%
     ungroup() %>%
     mutate(posID = factor(posID, levels = unique(posID)),
-           geneplot_posID = paste(nearest_gene, posID),
            from_posID = seq_along(posID),
            uniq_posID = as.numeric(posID),
            value = ifelse(duplicated(posID) == TRUE, 1, 0),
            cell_track_color = ifelse(group_n == 1,
                                      paste0(cell_colors[sample_cell], "60"),
                                      "#FFFFFFFF"),
-           abund_color = ifelse(abund >= 2, "#000000", "#CCCCCC"))
+           abund_color = ifelse(abund >= abund_threshold, "#000000", "#CCCCCC"))
     
   png(paste("figs/chord_", p, "_new.png", sep = ""),
       width = 1800, height = 1800, bg = "transparent")
@@ -340,22 +359,27 @@ for (p in uniq_patients) {
   dev.off()
 }
 
-
-df_legend <- data.frame(cell_col = cell_colors,
+make_legend <- function(cell_colors, uniq_cells, fn) {
+  df_legend <- data.frame(cell_col = cell_colors,
               cell = factor(uniq_cells, levels = uniq_cells),
               val = rnorm(length(uniq_cells)))
 
-g <- ggplot(df_legend, aes(x = uniq_cells, y = val, fill = cell)) +
-  geom_bar(stat = "identity", color = "#FFFFFF") +
-  scale_fill_manual(values = paste(cell_colors, "80", sep = "")) +
-  theme(legend.position = "bottom",
-        legend.text = element_text(size = 12)) +
-  guides(fill = guide_legend(override.aes = list(size = 10)))
+  g <- ggplot(df_legend, aes(x = uniq_cells, y = val, fill = cell)) +
+    geom_bar(stat = "identity", color = "#FFFFFF") +
+    scale_fill_manual(values = paste(cell_colors, "80", sep = "")) +
+    theme(legend.position = "bottom",
+          legend.text = element_text(size = 12)) +
+    guides(fill = guide_legend(override.aes = list(size = 10)))
+  
+  leg <- cowplot::get_legend(g)
+  grid.newpage()
+  grid.draw(leg)
+  ggsave(fn, device = "svg", width = 8)
+}
 
-leg <- cowplot::get_legend(g)
-grid.newpage()
-grid.draw(leg)
-ggsave("figs/chord_legend.svg", device = "svg", width = 8)
+make_legend(cell_colors_art, df_uniq_cells_art$sample_cell, "figs/chord_art_legend.svg")
+make_legend(cell_colors_acute, df_uniq_cells_acute$sample_cell, "figs/chord_acute_legend.svg")
+
 ```
 
 
@@ -467,10 +491,19 @@ make_heatmaps <- function(df, annot_ref, filter_type) {
 # settings for heatmaps and files
 annot_ref <- file.path(normalizePath("annot_ref"))
 
+mark_clonal <- function(exp, abund) {
+  clonal <- rep("single", length(abund))
+  
+  clonal[exp == "Acute" & abund >= 3] <- "clonal"
+  clonal[exp == "ART-treated" & abund >= 2] <- "clonal"
+  
+  return(clonal)
+}
+
 df_pre_mrc <- df_compiled %>%
   mutate(refGenome = "hg38",
          type = "insertion",
-         clonal = ifelse(abund > 1, "clonal", "single"),
+         clonal = mark_clonal(exp, abund),
          position = as.numeric(str_extract(posID, "(?<=[+-])(\\d*$)")))
 ```
 
@@ -505,6 +538,12 @@ df_pre_mrc %>%
   filter(exp == "ART-treated") %>%
   mutate(sampleName = paste(location, cell, sep = "_")) %>%
   make_heatmaps(annot_ref, "ARTonly_location_cell")
+
+# acute_only and location and cell
+df_pre_mrc %>%
+  filter(exp == "Acute") %>%
+  mutate(sampleName = paste(location, cell, sep = "_")) %>%
+  make_heatmaps(annot_ref, "Acuteonly_location_cell")
 ```
 
 # overall stat counts
@@ -521,4 +560,98 @@ df_compiled %>%
   dplyr::select(exp, abund, gene_plot, in_gene)
 ```
 
+# site annotations
+```{r}
+covplot(gr_compiled, title = "Integration site distribution over chromosome")
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+
+gr_anno <- annotatePeak(gr_compiled, TxDb = txdb, annoDb = "org.Hs.eg.db", overlap = "all")
+
+uniq_cells <- unique(gr_compiled$cell)
+for (cell in uniq_cells) {
+  gr_subset <- gr_compiled[gr_compiled$cell == cell]
+  if (length(gr_subset < 10)) {
+    next
+  }
+  
+  print(cell)
+  gr_subset_anno <- annotatePeak(gr_subset,
+                            TxDb = txdb,
+                            annoDb = "org.Hs.eg.db",
+                            overlap = "all",
+                            verbose = FALSE)
+  
+  pdf(paste0("figs/upsetplot_", cell, ".pdf"), width = 6, height = 4)
+  print(upsetplot(gr_subset_anno))
+  dev.off()
+}
+
+pdf(paste0("figs/upsetplot_", 'general', ".pdf"), onefile = FALSE, width = 6, height = 4)
+upsetplot(gr_anno)
+dev.off()
+```
+
+# in_gene comparison
+```{r}
+refGenes <- readRDS("reference_hg38.rds")
+refGenes <- refGenes[
+  seqnames(refGenes) %in% paste0("chr", c(1:22, "X", "Y"))
+]
+mod_refGenes <- unlist(GenomicRanges::reduce(split(
+    refGenes, refGenes$name2), min.gapwidth = 100000L))
+mod_refGenes$name <- names(mod_refGenes)
+
+get_loci_id <- function(gr){
+  paste0(seqnames(gr), strand(gr), start(gr), ":", end(gr))
+}
+
+all_in_gene <- findOverlaps(mod_refGenes, gr_compiled, maxgap = 5000, ignore.strand = TRUE)
+
+art_patients <- c("A", "B", "C")
+acute_patients <- c("A_D", "A_E", "A_F")
+
+all_stats <- as.data.frame(gr_compiled[subjectHits(all_in_gene)], row.names = NULL) %>%
+  mutate(loci = get_loci_id(mod_refGenes[queryHits(all_in_gene)]),
+    gene_name = as.character(mod_refGenes$name[queryHits(all_in_gene)]),
+    gene_ort = as.character(strand(mod_refGenes[queryHits(all_in_gene)])),
+    gene_width = (width(mod_refGenes$name[queryHits(all_in_gene)]) + 10000) / 1000,
+    strand = as.character(strand)) %>%
+  dplyr::select(loci, gene_name, gene_ort, posID, gene_width, strand, abund, exp, patient_anon) %>%
+  group_by(loci, gene_name, gene_ort, gene_width) %>%
+  summarise(n_patients = n_distinct(patient_anon),
+            acute_n_patients = n_distinct(patient_anon[patient_anon %in% acute_patients]),
+            art_n_patients = n_distinct(patient_anon[patient_anon %in% art_patients]),
+            n_sites = n_distinct(posID),
+            acute_n_sites = n_distinct(posID[patient_anon %in% acute_patients]),
+            art_n_sites = n_distinct(posID[patient_anon %in% art_patients]))
+
+
+acute_df <- df_compiled %>% filter(exp == "Acute")
+art_df <- df_compiled %>% filter(exp == "ART-treated")
+
+total_acute_sites <- length(unique(paste(acute_df$patient_anon, acute_df$posID)))
+total_art_sites <- length(unique(paste(art_df$patient_anon, art_df$posID)))
+total_pat_sites <- length(unique(paste(df_compiled$patient, df_compiled$posID)))
+
+all_stats %>%
+  dplyr::filter(n_patients > 0) %>%
+  ungroup() %>%
+  mutate(acute_freq = acute_n_sites / (gene_width * total_acute_sites),
+         art_freq = art_n_sites / (gene_width * total_art_sites),
+         freq_diff = (art_freq - acute_freq),
+         pct_chg = 100 * freq_diff / acute_freq) %>%
+  dplyr::filter(art_n_patients >= 1, art_n_sites >= 2, acute_n_sites > 0) %>%
+  arrange(desc(pct_chg)) %>%
+  dplyr::select(gene_name, acute_n_patients, art_n_patients,
+                acute_n_sites, art_n_sites, acute_freq, art_freq, pct_chg) %>%
+  write.csv(x = ., file = "site_enrichment.csv", row.names = FALSE, quote = FALSE)
+  # dplyr::mutate(id = seq_len(n())) %>%
+  # dplyr::group_by(id) %>%
+  # dplyr::mutate(freq_fisher_test = fisher.test(
+  #   matrix(
+  #     c(acute_n_sites, art_n_sites, total_acute_sites, total_pat_sites), 
+  #     ncol = 2))$p.value) %>%
+  # ungroup() %>%
+  # dplyr::mutate(adj_freq_test = p.adjust(freq_fisher_test, method = "BH"))
+```
 

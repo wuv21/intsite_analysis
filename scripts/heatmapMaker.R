@@ -157,6 +157,9 @@ na.median <- function(x) {
 annotate_genomic <- function(sites_mrcs, annot_ref) {
   reference_genome <- "hg38"
   
+  library(BSgenome.Hsapiens.UCSC.hg38)
+  hg38 <- get("BSgenome.Hsapiens.UCSC.hg38")
+  
   refseq_rds <- file.path(annot_ref, "hg38.refseq.rds")
   if (!file.exists(refseq_rds)) {
     refSeq_genes <- getRefSeq_genes(reference_genome)
@@ -284,9 +287,9 @@ annotate_epigenetic <- function(sites_mrcs, annot_ref, histoneorder_for_heatmap)
   annotPath <- file.path(annot_ref, "epigeneticData")
   for (f in todoHistones) {
     message(f)
-    
+
     load(file.path(annotPath, paste0(f, ".RData")))
-    if(length(sites) > 1e6) {
+    if(length(sites_mrcs) > 1e6) {
       sites_mrcs <- getFeatureCounts(sites_mrcs, epigenData, f, width=todoWindows,
                                      doInChunks=TRUE)
     } else {
