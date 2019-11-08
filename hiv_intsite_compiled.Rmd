@@ -60,6 +60,22 @@ gr_compiled <- makeGRangesFromDataFrame(df_compiled,
                                         keep.extra.columns = TRUE)
 ```
 
+# stat calculations
+```{r}
+df_compiled %>%
+  group_by(exp, patient_anon, location, cell) %>%
+  summarise(total_abund = sum(abund)) %>%
+  arrange(desc(total_abund)) %>% 
+  ungroup() %>%
+  group_by(exp, patient_anon, location) %>%
+  mutate(location_sum = sum(total_abund)) %>%
+  ungroup() %>%
+  group_by(exp, patient_anon) %>%
+  mutate(patient_sum = sum(total_abund)) %>%
+  arrange(exp, desc(patient_sum), desc(location_sum)) %>%
+  write.table("df_compiled_grouped_stats.csv", col.names = TRUE,
+              row.names = FALSE, quote = FALSE, sep = "\t")
+```
 
 # patient-wide simulations
 ```{r}
