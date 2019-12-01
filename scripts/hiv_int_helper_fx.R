@@ -198,9 +198,9 @@ draw_chord <- function(df_chord, uniq_cells, cell_colors, abund_scale) {
                      text = df_row$gene_plot,
                      col = "#FFFFFFFF",
                      facing = "clockwise",
-                     # niceFacing = TRUE,
-                     text.vjust = "45mm",
-                     cex = 1.5)
+                     niceFacing = TRUE,
+                     text.vjust = "31mm",
+                     cex = 1)
   }
   
   # label more abundant clones

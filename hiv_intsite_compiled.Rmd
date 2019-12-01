@@ -26,6 +26,8 @@ library(ChIPseeker)
 library(BSgenome.Hsapiens.UCSC.hg38)
 library(hotROCs)
 library(reshape2)
+library(svglite)
+library(egg)
 
 source("scripts/mrc_generator.R")
 source("scripts/heatmapMaker.R")
@@ -46,11 +48,11 @@ df_compiled <- df_art %>%
 
 # NOTE: removing chrM sample, likely mappinga artifact.
 df_compiled <- df_compiled %>%
-  filter(seqnames != "chrM")
+  dplyr::filter(seqnames != "chrM")
 
 # NOTE: remove patients D/E (no paired pbmc)
 df_compiled <- df_compiled %>%
-  filter(!patient_anon %in% c("D", "E"))
+  dplyr::filter(!patient_anon %in% c("D", "E"))
 
 df_compiled %>%
   dplyr::select(-patient) %>%
@@ -185,11 +187,12 @@ for (p in uniq_patients) {
 # hotspot graph
 ```{r}
 uniq_exp <- unique(df_compiled$exp)
+hotspot_graphs <- list()
 for (u in uniq_exp) {
   df_plot_all <- df_compiled %>%
-    filter(exp == u) %>%
+    dplyr::filter(exp == u) %>%
     arrange(desc(location), desc(cell), desc(patient)) %>%
-    mutate(cell_patient = paste(location, cell, patient, sep = "_"),
+    mutate(cell_patient = paste(location, cell, patient_anon, sep = " / "),
            cell_patient = factor(cell_patient),
            nearest_gene = factor(nearest_gene, levels = unique(nearest_gene)))
   
@@ -209,56 +212,52 @@ for (u in uniq_exp) {
   
   melted_sim <- melt(sim_matrix) %>%
     mutate(Var1 = factor(Var1, labels = levels(df_plot_all$cell_patient))) %>%
-    separate(Var1, into = c("sample_type", "cell", "patient"), remove = FALSE, sep = "_") %>%
+    separate(Var1, into = c("sample_type", "cell", "patient"), remove = FALSE, sep = " / ") %>%
     dplyr::filter(value > 0) %>%
     mutate(Var2 = factor(Var2))
   
   cs <- base::colSums(sim_matrix)
   
-  heatmap_theme <- theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+  heatmap_theme <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
                          panel.background = element_rect(fill = "#132b43"),
                          panel.grid.major.y = element_blank(),
                          panel.grid.minor.y = element_blank(),
                          panel.grid.major.x = element_blank(),
                          legend.position = "none")
-                         # axis.text.y = element_text(size = 3)
   
   col_of_interest <- which(colSums(sim_matrix) >= 3)
-  
-  ggplot(melted_sim, aes(Var1, Var2, fill = value)) +
-    geom_raster(fill = "#56b1f7") +
-    geom_hline(yintercept = c(col_of_interest), color = "#00ff00", alpha = 0.35) +
-    theme_bw() +
-    labs(title = "Nearest gene overlap across patients across subsets",
-         x = "Cell type - Patient",
-         y = "Gene") +
-    scale_y_discrete(breaks = col_of_interest,
-                     labels = levels(df_plot_all$nearest_gene)[col_of_interest]) + 
-    heatmap_theme
-  
-  ggsave(paste0("figs/", "overlap_", u, ".png"),
-         device = "png", width = 6, height = 9)
-  
   
   of_interest <- melted_sim %>%
     dplyr::filter(Var2 %in% col_of_interest)
   
-  ggplot(of_interest, aes(Var1, factor(Var2), fill = value)) +
-    geom_raster(fill = "#56b1f7") +
+  g <- ggplot(of_interest, aes(Var1, factor(Var2), fill = value)) +
+    geom_tile(fill = "#56b1f7", width = 1, height = 1) +
     scale_y_discrete(breaks = col_of_interest,
                      labels = levels(df_plot_all$nearest_gene)[col_of_interest]) +
     theme_bw() +
-    labs(title = "Nearest gene overlap across patients across subsets",
-         subtitle = "(showing genes seen in 3 or more subsets/patients",
-         x = "Cell type - Patient",
+    labs(x = "Compartment / Subset / Patient",
          y = "Gene") +
     heatmap_theme +
     coord_equal()
   
-  ggsave(paste0("figs/", "overlap_hotspot_", u, ".png"),
-         device = "png", width = 6, height = 6)  
+  
+  p <- egg::set_panel_size(g, height=unit(length(col_of_interest), "cm"),
+                          width=unit(length(unique(of_interest$Var1)), "cm") )
+  
+  hotspot_graphs[[u]] <- p
+  # ggsave(paste0("figs/", "overlap_hotspot_", u, ".png"),
+  #        device = "png")
 }
+
+# p1 <- egg::set_panel_size(g_lg, height=unit(ncol(mat_lg), "cm"),
+#                           width=unit(nrow(mat_lg), "cm") )
+# p2 <- egg::set_panel_size(g_sm, height=unit(ncol(mat_sm), "cm"),
+#                           width=unit(nrow(mat_sm), "cm") )
+cowplot::plot_grid(hotspot_graphs[["Acute"]],
+                   hotspot_graphs[["ART-treated"]], nrow=1)
+ggsave(paste0("figs/", "overlap_hotspot_final.png"), device = "png", width = 28, height = 12, units = "cm")
 ```
+
 
 # clonal expansion graph
 ```{r}
@@ -276,7 +275,7 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
     group_by(main_id, cell) %>%
     mutate(group_abund = sum(abund),
            rel_abund = abund / group_abund,
-           gene_plot_2 = ifelse(abund < abund_filter, "Low Abundance", gene_plot),
+           gene_plot_2 = ifelse(abund < abund_filter, "Low Abundance", gene_plot_noid),
            x_axis = paste(location, "\n", cell, "\n", "n = ", sum(abund), sep = "")) %>%
     arrange(desc(rel_abund))
   
@@ -290,32 +289,40 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
   colors[1] <- "#dddddd"
   
   g <- ggplot(df_rel, aes(x = x_axis, y = rel_abund, fill = gene_plot_2)) +
-  geom_bar(stat = "identity") +
-  theme_classic() +
-  theme(panel.grid.major.x = element_blank(),
-        panel.grid.minor.x = element_blank(),
-        legend.title = element_blank(),
-        legend.text = element_text(size = 5),
-        legend.key.width = unit(10, units = "points"),
-        legend.key.height = unit(10, units = "points")) +
-  scale_fill_manual(values = colors) +
-  labs(title = p,
-       x = "Patient and Cell Type (n = total inferred cells)",
-       y = paste0("Relative sonic abund \n(Low Abund < ", abund_filter, " sonic abund)"))
+    geom_bar(stat = "identity") +
+    theme_classic() +
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          legend.title = element_blank(),
+          legend.text = element_text(size = 3),
+          legend.position = "bottom",
+          legend.key.width = unit(5, units = "points"),
+          legend.key.height = unit(5, units = "points")) +
+    scale_fill_manual(values = colors) +
+    labs(title = p,
+         x = "Patient and Cell Type (n = total inferred cells)",
+         y = paste0("Relative sonic abund \n(Low Abund < ", abund_filter, " sonic abund)"))
   
-  ggsave(paste0("figs/", "rel_abund_", p, ".png"),
-         plot = g, device = "png", width = 7, height = 4, bg = "transparent")
+  scaled_g <- egg::set_panel_size(g, height=unit(6, "cm"),
+                          width=unit(length(unique(df_rel$x_axis)) + 3.5, "cm"))
+  
+  return(scaled_g)
+  # ggsave(paste0("figs/", "rel_abund_", p, ".png"), device = "png", bg = "transparent")
 }
 
 uniq_patients <- unique(df_compiled$patient_anon)
+clonal_graphs <- list()
 for (p in uniq_patients) {
   if (startsWith(p, "A_")) {
-    make_clonal_expansion_graph(df_compiled, p, "Acute")
+    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Acute")
   } else {
-    make_clonal_expansion_graph(df_compiled, p, "ART-treated")
+    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "ART-treated")
   }
 }
+
+cowplot::plot_grid(clonal_graphs[["A"]], clonal_graphs[["B"]], clonal_graphs[["C"]], nrow=1)
 ```
+
 
 # circos plot
 ```{r}
@@ -337,6 +344,11 @@ df_uniq_cells_acute <- df_uniq_cells %>%
 cell_colors_art <- brewer.pal(length(df_uniq_cells_art$sample_cell), "Paired")
 cell_colors_acute <- brewer.pal(length(df_uniq_cells_acute$sample_cell), "Paired")
 
+arrange_posID <- function(posID) {
+  set.seed(1)
+  return(sample(posID))
+}
+
 for (p in uniq_patients) {
   if (grepl("_", p)) {
     cell_colors <- cell_colors_acute
@@ -356,6 +368,7 @@ for (p in uniq_patients) {
     ungroup() %>%
     arrange(sample_cell) %>%
     group_by(sample_cell) %>%
+    arrange(arrange_posID(posID), .by_group = TRUE) %>%
     add_tally(name = "group_n") %>%
     ungroup() %>%
     mutate(posID = factor(posID, levels = unique(posID)),
@@ -367,10 +380,14 @@ for (p in uniq_patients) {
                                      "#FFFFFFFF"),
            abund_color = ifelse(abund >= abund_threshold, "#000000", "#CCCCCC"))
     
-  png(paste("figs/chord_", p, "_new.png", sep = ""),
-      width = 1800, height = 1800, bg = "transparent")
+  # png(paste("figs/chord_", p, "_new.png", sep = ""),
+  #     width = 1800, height = 1800, bg = "transparent")
   
-  # svglite(paste("figs/chord_", p, "new.svg", sep = ""), bg = "transparent")
+  svglite(paste("figs/chord_", p, "_new.svg", sep = ""),
+          bg = "transparent",
+          system_fonts = list(sans = "Arial"),
+          width = 10,
+          height = 10)
   draw_chord(df_chord_test, uniq_cells, cell_colors, abund_scale)
   dev.off()
 }
@@ -384,13 +401,21 @@ make_legend <- function(cell_colors, uniq_cells, fn) {
     geom_bar(stat = "identity", color = "#FFFFFF") +
     scale_fill_manual(values = paste(cell_colors, "80", sep = "")) +
     theme(legend.position = "bottom",
-          legend.text = element_text(size = 12)) +
+          legend.text = element_text(size = 12),
+          panel.grid = element_blank(),
+          panel.background = element_blank(),
+          axis.line = element_blank(),
+          axis.title = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          plot.background = element_blank(),
+          legend.title = element_blank()) +
     guides(fill = guide_legend(override.aes = list(size = 10)))
   
-  leg <- cowplot::get_legend(g)
-  grid.newpage()
-  grid.draw(leg)
-  ggsave(fn, device = "svg", width = 8)
+  # leg <- cowplot::get_legend(g)
+  # grid.newpage()
+  # grid.draw(leg)
+  ggsave(fn, plot = g, device = "svg", width = 8)
 }
 
 make_legend(cell_colors_art, df_uniq_cells_art$sample_cell, "figs/chord_art_legend.svg")
@@ -605,6 +630,34 @@ for (cell in uniq_cells) {
 pdf(paste0("figs/upsetplot_", 'general', ".pdf"), onefile = FALSE, width = 6, height = 4)
 upsetplot(gr_anno)
 dev.off()
+
+df_anno <- data.frame(gr_anno) %>%
+  mutate(feature = case_when(grepl("Intron", annotation) ~ "Intron",
+    grepl("Distal Intergenic", annotation) ~ "Distal intergenic",
+    grepl("Exon", annotation) ~ "Exon",
+    TRUE ~ "Other")) %>%
+  mutate(feature = factor(feature, levels = c("Intron", "Distal intergenic", "Exon", "Other"))) %>%
+  group_by(exp, location, cell) %>%
+  mutate(group_n = sum(abund)) %>%
+  group_by(exp, location, cell, feature) %>%
+  summarise(percent_feature = sum(abund) / max(group_n) * 100,
+            group_abund = max(group_n)) %>%
+  mutate(x_axis = paste0(cell, "\n(", group_abund, ")"))
+
+ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = feature)) +
+  geom_col(position = position_dodge2(preserve = "single")) +
+  labs(fill = "Feature",
+       y = "% sonic abundance",
+       x = "Cell subset\n(total sonic abundance)") +
+  theme_classic() +
+  theme(strip.background = element_rect(fill = "#FFFFFF", colour = "#FFFFFF"),
+        strip.text = element_text(face = "bold", size = 10),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 8)) +
+  guides(color = guide_legend(override.aes = list(size = 0.75))) +
+  facet_wrap(~ exp + location, scales = "free_x")
+
+ggsave(filename = "figs/site_annot_subset.pdf", device = "pdf", width = 9, height = 6)
 ```
 
 # in_gene comparison
@@ -669,5 +722,32 @@ all_stats %>%
   #     ncol = 2))$p.value) %>%
   # ungroup() %>%
   # dplyr::mutate(adj_freq_test = p.adjust(freq_fisher_test, method = "BH"))
+```
+
+
+```{r}
+mat_lg <- matrix(rexp(20, rate=.1), ncol = 4)
+
+g_lg <- melt(mat_lg) %>%
+  ggplot(aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  theme_bw() +
+  coord_equal()
+
+mat_sm <- matrix(rexp(30, rate = .1), ncol = 10)
+
+g_sm <- melt(mat_sm) %>%
+  ggplot(aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  theme_bw() +
+  coord_equal()
+
+library(egg)
+
+p1 <- egg::set_panel_size(g_lg, height=unit(ncol(mat_lg), "cm"),
+                          width=unit(nrow(mat_lg), "cm") )
+p2 <- egg::set_panel_size(g_sm, height=unit(ncol(mat_sm), "cm"),
+                          width=unit(nrow(mat_sm), "cm") )
+cowplot::plot_grid( p1, p2, nrow=1)
 ```
 
