@@ -261,7 +261,6 @@ ggsave(paste0("figs/", "overlap_hotspot_final.png"), device = "png", width = 28,
 
 # clonal expansion graph
 ```{r}
-# combine df
 make_clonal_expansion_graph <- function(df, p, exp_type) {
   if (exp_type == "Acute") {
     abund_filter <- 3
@@ -294,14 +293,13 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
     theme(panel.grid.major.x = element_blank(),
           panel.grid.minor.x = element_blank(),
           legend.title = element_blank(),
-          legend.text = element_text(size = 3),
-          legend.position = "bottom",
-          legend.key.width = unit(5, units = "points"),
-          legend.key.height = unit(5, units = "points")) +
+          legend.text = element_text(size = 6),
+          legend.position = "bottom") +
     scale_fill_manual(values = colors) +
     labs(title = p,
          x = "Patient and Cell Type (n = total inferred cells)",
-         y = paste0("Relative sonic abund \n(Low Abund < ", abund_filter, " sonic abund)"))
+         y = paste0("Relative sonic abund \n(Low Abund < ", abund_filter, " sonic abund)")) +
+    guides(color = guide_legend(override.aes = list(size = 0.1)))
   
   scaled_g <- egg::set_panel_size(g, height=unit(6, "cm"),
                           width=unit(length(unique(df_rel$x_axis)) + 3.5, "cm"))
@@ -320,7 +318,14 @@ for (p in uniq_patients) {
   }
 }
 
-cowplot::plot_grid(clonal_graphs[["A"]], clonal_graphs[["B"]], clonal_graphs[["C"]], nrow=1)
+art_rel_abund <- cowplot::plot_grid(clonal_graphs[["A"]], clonal_graphs[["B"]], clonal_graphs[["C"]], ncol = 1, align = "h")
+cowplot::save_plot("figs/rel_abund_art.pdf", art_rel_abund, base_width = NULL, base_height = 25, device = "pdf")
+
+acute_rel_abund <- cowplot::plot_grid(clonal_graphs[["A_D"]], clonal_graphs[["A_E"]], clonal_graphs[["A_F"]], ncol = 1, align = "h")
+cowplot::save_plot("figs/rel_abund_acute.pdf", acute_rel_abund, base_width = NULL, base_height = 25, device = "pdf")
+
+# 
+# ggarrange(clonal_graphs[["A"]], clonal_graphs[["B"]], nrow=1)
 ```
 
 
@@ -641,8 +646,22 @@ df_anno <- data.frame(gr_anno) %>%
   mutate(group_n = sum(abund)) %>%
   group_by(exp, location, cell, feature) %>%
   summarise(percent_feature = sum(abund) / max(group_n) * 100,
+            sum_feature = sum(abund),
             group_abund = max(group_n)) %>%
   mutate(x_axis = paste0(cell, "\n(", group_abund, ")"))
+
+
+# chi square test to test cell subset influence on the genomic site proportions
+df_anno %>%
+  ungroup() %>%
+  dplyr::filter(exp == "ART-treated", location == "Tonsil") %>%
+  dplyr::select(cell, feature, sum_feature) %>%
+  pivot_wider(names_from = feature,
+              values_from = sum_feature) %>%
+  dplyr::filter(!cell == "Naive") %>%
+  dplyr::select(-cell) %>%
+  chisq.test(., simulate.p.value = TRUE)
+
 
 ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = feature)) +
   geom_col(position = position_dodge2(preserve = "single")) +
