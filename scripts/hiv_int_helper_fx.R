@@ -192,11 +192,10 @@ draw_chord <- function(df_chord, uniq_cells, cell_colors, abund_scale) {
                 lwd = 2,
                 col = "#000000")
     
-    
     highlight.sector(c(df_row$from_posID: df_row$from_posID),
                      track.index = 1,
                      text = df_row$gene_plot,
-                     col = "#FFFFFFFF",
+                     col = "#00FF00",
                      facing = "clockwise",
                      niceFacing = TRUE,
                      text.vjust = "31mm",
@@ -209,11 +208,11 @@ draw_chord <- function(df_chord, uniq_cells, cell_colors, abund_scale) {
   # 
   # for (i in seq_along(df_abundant$gene_plot)) {
   #   df_row <- df_abundant[i, ]
-  #   
+  # 
   #   highlight.sector(c(df_row$from_posID: df_row$from_posID),
   #                    track.index = 1,
   #                    text = df_row$gene_plot_noid,
-  #                    col = "#FFFFFFFF",
+  #                    col = "#red",
   #                    facing = "clockwise",
   #                    niceFacing = TRUE,
   #                    text.vjust = "40mm",

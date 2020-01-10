@@ -28,6 +28,7 @@ library(hotROCs)
 library(reshape2)
 library(svglite)
 library(egg)
+library(glue)
 
 source("scripts/mrc_generator.R")
 source("scripts/heatmapMaker.R")
@@ -39,24 +40,77 @@ source("scripts/hiv_int_helper_fx.R")
 
 # load and merge data files
 ```{r}
-df_art <- readRDS("data/df_compiled_1-5.rds")
-df_acute <- readRDS("data/df_compiled_6.rds")
+df_compiled <- readRDS("data/df_compiled.rds")
 
-df_compiled <- df_art %>%
-  mutate(exp = "ART-treated") %>%
-  bind_rows(df_acute %>% mutate(exp = "Acute"))
-
-# NOTE: removing chrM sample, likely mappinga artifact.
 df_compiled <- df_compiled %>%
-  dplyr::filter(seqnames != "chrM")
+  dplyr::filter(!is.na(patient_anon)) %>%
+  dplyr::filter(seqnames != "chrM") %>%
+  mutate(exp = str_match(run, pattern = "(\\w+)_(\\d)")[, 2]) %>%
+  mutate(exp = ifelse(exp == "art", "ART", str_to_title(exp)),
+         cell_oldname = cell)
 
-# NOTE: remove patients D/E (no paired pbmc)
+# set proper names for metacolumns
+df_compiled$location <- sapply(df_compiled$location, function(x) {
+  val <- ""
+  if (x == "pbmc") {
+    val <- "PBMC"
+  } else if (x == "tonsil") {
+    val <- "Tonsil"
+  } else {
+    val <- toupper(x)
+  }
+  
+  return(val)
+})
+
+df_compiled$cell <- sapply(seq_along(df_compiled$cell), function(i) {
+  row <- df_compiled[i, ]
+  cell <- row$cell
+  loc <- row$location
+  exp <- str_match(row$run, pattern = "(\\w+)_")[, 1]
+  
+  val <- ""
+  error <- "error"
+  
+  if (exp == "ART" && loc == "Tonsil") {
+    val <- case_when(
+      cell == "naive" ~ "Naive",
+      cell == "69pos" ~ "HLA-DR- CD69+",
+      cell == "69neg" ~ "HLA-DR- CD69-",
+      cell == "gctfh" ~ "HLA-DR- GC-Tfh",
+      TRUE ~ error
+    )
+  } else if (exp == "ART" && loc == "PBMC") {
+    val <- case_when(
+      cell == "naive" ~ "Naive",
+      cell == "tcm" ~ "CD69- Tcm",
+      cell == "tem" ~ "CD69- Tem",
+      TRUE ~ error
+    )
+  } else {
+    val <- case_when(
+      cell == "naive" ~ "Naive",
+      cell == "69pos" ~ "CD69+",
+      cell == "69neg" ~ "CD69-",
+      cell == "gctfh" ~ "GC-Tfh",
+      cell == "tcm" ~ "Tcm",
+      cell == "tem" ~ "Tem",
+      cell == "temra" ~ "Temra",
+      TRUE ~ error
+    )    
+  }
+  
+  return(val)
+})
+
+# label in/out of gene
 df_compiled <- df_compiled %>%
-  dplyr::filter(!patient_anon %in% c("D", "E"))
-
-df_compiled %>%
-  dplyr::select(-patient) %>%
-  saveRDS(file = "data/df_compiled_vincent.rds")
+  mutate(gene_plot_noid = case_when(
+    in_gene == "FALSE" & abs(nearest_geneDist) <= 50000 ~ glue("{nearest_gene}+"),
+    in_gene == "FALSE" & abs(nearest_geneDist) > 50000 ~ glue("{nearest_gene}#"),
+    TRUE ~ in_gene
+  )) %>%
+  mutate(gene_plot = paste(gene_plot_noid, posID))
 
 gr_compiled <- makeGRangesFromDataFrame(df_compiled,
                                         keep.extra.columns = TRUE)
@@ -78,6 +132,23 @@ df_compiled %>%
   write.table("df_compiled_grouped_stats.csv", col.names = TRUE,
               row.names = FALSE, quote = FALSE, sep = "\t")
 ```
+
+# in/out of gene
+```{r}
+
+```
+
+
+# temp explore
+```{r}
+# checking overlap
+df_compiled %>% 
+  filter(patient_anon == "A") %>%
+  group_by(posID) %>% 
+  filter(n() > 1) %>%
+  arrange(posID)
+```
+
 
 # patient-wide simulations
 ```{r}
@@ -331,6 +402,7 @@ cowplot::save_plot("figs/rel_abund_acute.pdf", acute_rel_abund, base_width = NUL
 
 # circos plot
 ```{r}
+# TODO FIX GRAPH...SOMETHING WRONG WITH THE OVERLAP LINES...
 uniq_patients <- unique(df_compiled$patient_anon)
 # uniq_cells <- unique(paste(df_compiled$location, df_compiled$cell, sep = "_"))
 # cell_colors <- brewer.pal(length(uniq_cells), "Paired")
@@ -341,24 +413,35 @@ df_uniq_cells <- df_compiled %>%
   distinct(sample_cell)
 
 df_uniq_cells_art <- df_uniq_cells %>%
-  dplyr::filter(exp == "ART-treated")
+  dplyr::filter(exp == "ART")
 
 df_uniq_cells_acute <- df_uniq_cells %>%
   dplyr::filter(exp == "Acute")
 
+
+df_uniq_cells_chronic <- df_uniq_cells %>%
+  dplyr::filter(exp == "Chronic")
+
+
 cell_colors_art <- brewer.pal(length(df_uniq_cells_art$sample_cell), "Paired")
 cell_colors_acute <- brewer.pal(length(df_uniq_cells_acute$sample_cell), "Paired")
+cell_colors_chronic <- brewer.pal(length(df_uniq_cells_chronic$sample_cell), "Paired")
 
 arrange_posID <- function(posID) {
   set.seed(1)
   return(sample(posID))
 }
 
-for (p in uniq_patients) {
-  if (grepl("_", p)) {
+for (p in c("A")) {
+  if (grepl("A_", p)) {
     cell_colors <- cell_colors_acute
     uniq_cells <- df_uniq_cells_acute$sample_cell
     abund_threshold <- 3
+    
+  } else if (grepl("C_", p )) {
+    cell_colors <- cell_colors_chronic
+    uniq_cells <- df_uniq_cells_chronic$sample_cell
+    abund_threshold <- 2
     
   } else {
     cell_colors <- cell_colors_art
@@ -423,50 +506,18 @@ make_legend <- function(cell_colors, uniq_cells, fn) {
   ggsave(fn, plot = g, device = "svg", width = 8)
 }
 
-make_legend(cell_colors_art, df_uniq_cells_art$sample_cell, "figs/chord_art_legend.svg")
-make_legend(cell_colors_acute, df_uniq_cells_acute$sample_cell, "figs/chord_acute_legend.svg")
+make_legend(cell_colors_art,
+            df_uniq_cells_art$sample_cell,
+            "figs/chord_art_legend.svg")
 
-```
+make_legend(cell_colors_acute,
+            df_uniq_cells_acute$sample_cell,
+            "figs/chord_acute_legend.svg")
 
+make_legend(cell_colors_chronic,
+            df_uniq_cells_chronic$sample_cell,
+            "figs/chord_chronic_legend.svg")
 
-
-# compile dataset from published sources
-```{r}
-df <- read.csv("data/20191004_hiris.csv", header = TRUE, stringsAsFactors = FALSE) %>%
-  filter(environment == "in vivo")
-
-pmid_of_interest <- c("15163705", "17262715", "24968937", "25011556")
-
-df_interest <- df %>%
-  filter(pubmed_ids %in% pmid_of_interest) %>%
-  mutate(strand = ifelse(orientation_in_landmark == "", "*",
-                         ifelse(orientation_in_landmark == "F", "+", "-")))
-
-gr_interest <- makeGRangesFromDataFrame(df_interest,
-                                       keep.extra.columns = TRUE,
-                                       seqnames.field = "landmark",
-                                       start.field = "location",
-                                       end.field = "location",
-                                       strand.field = "strand")
-
-gr_interest
-
-ref <- make_ref("reference_hg38.rds")
-gr_interest <- getSitesInFeature(gr_interest, ref, "in_gene")
-gr_interest <- getNearestFeature(gr_interest, ref, "nearest_gene")
-
-df_clonal <- data.frame(gr_interest) %>%
-  filter(in_gene != "FALSE") %>%
-  group_by(in_gene) %>%
-  tally() %>%
-  arrange(desc(n))
-
-write.table(df_clonal,
-            "historical_art_intsites.tsv",
-            sep = "\t",
-            row.names = FALSE,
-            col.names = FALSE,
-            quote = FALSE)
 ```
 
 # Genomic Heatmaps
