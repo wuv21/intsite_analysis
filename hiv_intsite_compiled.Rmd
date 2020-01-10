@@ -43,7 +43,7 @@ source("scripts/hiv_int_helper_fx.R")
 df_compiled <- readRDS("data/df_compiled.rds")
 
 df_compiled <- df_compiled %>%
-  dplyr::filter(!is.na(patient_anon)) %>%
+  dplyr::filter(patient_anon != "") %>%
   dplyr::filter(seqnames != "chrM") %>%
   mutate(exp = str_match(run, pattern = "(\\w+)_(\\d)")[, 2]) %>%
   mutate(exp = ifelse(exp == "art", "ART", str_to_title(exp)),
@@ -143,10 +143,10 @@ df_compiled %>%
 ```{r}
 # checking overlap
 df_compiled %>% 
-  filter(patient_anon == "A") %>%
-  group_by(posID) %>% 
+  group_by(patient_anon, posID) %>%
   filter(n() > 1) %>%
-  arrange(posID)
+  arrange(posID, .by_group = TRUE) %>%
+  summarise(count = sum(n()))
 ```
 
 
@@ -402,7 +402,6 @@ cowplot::save_plot("figs/rel_abund_acute.pdf", acute_rel_abund, base_width = NUL
 
 # circos plot
 ```{r}
-# TODO FIX GRAPH...SOMETHING WRONG WITH THE OVERLAP LINES...
 uniq_patients <- unique(df_compiled$patient_anon)
 # uniq_cells <- unique(paste(df_compiled$location, df_compiled$cell, sep = "_"))
 # cell_colors <- brewer.pal(length(uniq_cells), "Paired")
@@ -432,7 +431,7 @@ arrange_posID <- function(posID) {
   return(sample(posID))
 }
 
-for (p in c("A")) {
+for (p in uniq_patients) {
   if (grepl("A_", p)) {
     cell_colors <- cell_colors_acute
     uniq_cells <- df_uniq_cells_acute$sample_cell
