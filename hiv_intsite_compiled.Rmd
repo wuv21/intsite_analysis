@@ -652,15 +652,15 @@ df_anno <- data.frame(gr_anno) %>%
 
 
 # chi square test to test cell subset influence on the genomic site proportions
-df_anno %>%
-  ungroup() %>%
-  dplyr::filter(exp == "ART-treated", location == "Tonsil") %>%
-  dplyr::select(cell, feature, sum_feature) %>%
-  pivot_wider(names_from = feature,
-              values_from = sum_feature) %>%
-  dplyr::filter(!cell == "Naive") %>%
-  dplyr::select(-cell) %>%
-  chisq.test(., simulate.p.value = TRUE)
+# df_anno %>%
+#   ungroup() %>%
+#   dplyr::filter(exp == "ART-treated", location == "Tonsil") %>%
+#   dplyr::select(cell, feature, sum_feature) %>%
+#   pivot_wider(names_from = feature,
+#               values_from = sum_feature) %>%
+#   dplyr::filter(!cell == "Naive") %>%
+#   dplyr::select(-cell) %>%
+#   chisq.test(., simulate.p.value = TRUE)
 
 
 ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = feature)) +

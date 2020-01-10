@@ -101,18 +101,18 @@ calc_abund <- function(primer, posid) {
 find_bp <- function(i, df) {
   row <- df[i, ]
   
-  row$primer <- tolower(row$primer)
+  row$primer_id <- tolower(row$primer_id)
   
   # find middle of breakpoint (+2bp from edge)
   pos <- -1
   ori <- ""
-  if (row$primer == "u5" & row$strand == "+") {
+  if (row$primer_id == "u5" & row$strand == "+") {
     pos <- row$start + 2
     ori <- "+"
-  } else if (row$primer == "u5" & row$strand == "-") {
+  } else if (row$primer_id == "u5" & row$strand == "-") {
     pos <- row$end - 2
     ori <- "-"
-  } else if (row$primer == "u3" & row$strand == "+") {
+  } else if (row$primer_id == "u3" & row$strand == "+") {
     pos <- row$start + 2
     ori <- "-"
   } else {
