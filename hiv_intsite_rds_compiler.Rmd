@@ -10,7 +10,6 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r, message=FALSE}
-library(ggplot2)
 library(tidyverse)
 library(GenomicRanges)
 library(hiAnnotator)
@@ -156,7 +155,7 @@ sample_codes <- read.csv("metadata/sample_codes.csv", stringsAsFactors = FALSE)
 
 df_compiled <- data.frame(gr) %>%
   left_join(sample_codes, by = c("run", "main_id")) %>%
-  select(-patient)
+  dplyr::select(-patient)
 
 saveRDS(df_compiled, file = "data/df_compiled.rds")
 ```

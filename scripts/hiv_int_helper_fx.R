@@ -195,7 +195,7 @@ draw_chord <- function(df_chord, uniq_cells, cell_colors, abund_scale) {
     highlight.sector(c(df_row$from_posID: df_row$from_posID),
                      track.index = 1,
                      text = df_row$gene_plot,
-                     col = "#00FF00",
+                     col = "#FFFFFF00",
                      facing = "clockwise",
                      niceFacing = TRUE,
                      text.vjust = "31mm",

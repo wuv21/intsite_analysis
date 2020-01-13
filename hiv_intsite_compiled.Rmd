@@ -63,16 +63,16 @@ df_compiled$location <- sapply(df_compiled$location, function(x) {
   return(val)
 })
 
-df_compiled$cell <- sapply(seq_along(df_compiled$cell), function(i) {
+df_compiled$cell <- sapply(seq_along(df_compiled$cell_oldname), function(i) {
   row <- df_compiled[i, ]
-  cell <- row$cell
+  cell <- row$cell_oldname
   loc <- row$location
-  exp <- str_match(row$run, pattern = "(\\w+)_")[, 1]
+  exp <- row$exp
   
   val <- ""
   error <- "error"
   
-  if (exp == "ART" && loc == "Tonsil") {
+  if (exp == "ART" & loc == "Tonsil") {
     val <- case_when(
       cell == "naive" ~ "Naive",
       cell == "69pos" ~ "HLA-DR- CD69+",
@@ -80,7 +80,7 @@ df_compiled$cell <- sapply(seq_along(df_compiled$cell), function(i) {
       cell == "gctfh" ~ "HLA-DR- GC-Tfh",
       TRUE ~ error
     )
-  } else if (exp == "ART" && loc == "PBMC") {
+  } else if (exp == "ART" & loc == "PBMC") {
     val <- case_when(
       cell == "naive" ~ "Naive",
       cell == "tcm" ~ "CD69- Tcm",
@@ -135,7 +135,39 @@ df_compiled %>%
 
 # in/out of gene
 ```{r}
+df_compiled %>%
+  ungroup() %>%
+  mutate(feature = ifelse(in_gene == "FALSE", "Outside", "In")) %>%
+  group_by(exp, location, cell) %>%
+  mutate(group_n = sum(abund)) %>%
+  group_by(exp, location, cell, feature) %>%
+  summarise(percent_feature = sum(abund) / max(group_n) * 100,
+            sum_feature = sum(abund),
+            group_abund = max(group_n)) %>%
+  mutate(x_axis = paste0(gsub(" ", "\n", cell),
+                         "\n(",
+                         group_abund,
+                         ")")) %>%
+  ungroup() %>%
+  mutate(exp = factor(exp, levels = c("Acute", "Chronic", "ART")),
+         location = factor(location, levels = c("PBMC", "CLN", "ILN", "Tonsil"))) %>%
+  ggplot(aes(x = x_axis, y = percent_feature, fill = feature)) +
+  geom_col(position = position_dodge2(preserve = "single")) +
+  labs(fill = "Feature",
+       y = "% sonic abundance",
+       x = "Cell subset\n(total sonic abundance)") +
+  theme_classic() +
+  theme(strip.background = element_rect(fill = "#FFFFFF", colour = "#FFFFFF"),
+        strip.text = element_text(face = "bold", size = 10),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 8),
+        axis.text.x = element_text(size = 8)) +
+  guides(color = guide_legend(override.aes = list(size = 0.75))) +
+  facet_wrap(~ exp + location,
+             scales = "free_x",
+             labeller = facet_label_clean)
 
+ggsave(filename = "figs/inout_gene_subset.svg", device = "svg", width = 9, height = 6)
 ```
 
 
@@ -262,7 +294,8 @@ hotspot_graphs <- list()
 for (u in uniq_exp) {
   df_plot_all <- df_compiled %>%
     dplyr::filter(exp == u) %>%
-    arrange(desc(location), desc(cell), desc(patient)) %>%
+    dplyr::filter(!(in_gene == "FALSE" & abs(nearest_geneDist <= 50000))) %>%
+    arrange(desc(location), desc(cell), desc(patient_anon)) %>%
     mutate(cell_patient = paste(location, cell, patient_anon, sep = " / "),
            cell_patient = factor(cell_patient),
            nearest_gene = factor(nearest_gene, levels = unique(nearest_gene)))
@@ -289,14 +322,19 @@ for (u in uniq_exp) {
   
   cs <- base::colSums(sim_matrix)
   
-  heatmap_theme <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+  heatmap_theme <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 7),
                          panel.background = element_rect(fill = "#132b43"),
                          panel.grid.major.y = element_blank(),
                          panel.grid.minor.y = element_blank(),
                          panel.grid.major.x = element_blank(),
                          legend.position = "none")
   
-  col_of_interest <- which(colSums(sim_matrix) >= 3)
+  if (u == "Chronic") {
+    col_of_interest <- which(colSums(sim_matrix) >= 4)
+  } else {
+    col_of_interest <- which(colSums(sim_matrix) >= 3)
+  }
+
   
   of_interest <- melted_sim %>%
     dplyr::filter(Var2 %in% col_of_interest)
@@ -312,21 +350,18 @@ for (u in uniq_exp) {
     coord_equal()
   
   
-  p <- egg::set_panel_size(g, height=unit(length(col_of_interest), "cm"),
-                          width=unit(length(unique(of_interest$Var1)), "cm") )
+  p <- egg::set_panel_size(g, height=unit(length(col_of_interest) / 1.5, "cm"),
+                          width=unit(length(unique(of_interest$Var1)) / 1.5, "cm") )
   
   hotspot_graphs[[u]] <- p
-  # ggsave(paste0("figs/", "overlap_hotspot_", u, ".png"),
-  #        device = "png")
 }
 
-# p1 <- egg::set_panel_size(g_lg, height=unit(ncol(mat_lg), "cm"),
-#                           width=unit(nrow(mat_lg), "cm") )
-# p2 <- egg::set_panel_size(g_sm, height=unit(ncol(mat_sm), "cm"),
-#                           width=unit(nrow(mat_sm), "cm") )
 cowplot::plot_grid(hotspot_graphs[["Acute"]],
-                   hotspot_graphs[["ART-treated"]], nrow=1)
-ggsave(paste0("figs/", "overlap_hotspot_final.png"), device = "png", width = 28, height = 12, units = "cm")
+                   hotspot_graphs[["ART"]],
+                   hotspot_graphs[["Chronic"]], nrow=1)
+
+ggsave(paste0("figs/", "overlap_hotspot_final.png"),
+       device = "png", width = 60, height = 40, units = "cm")
 ```
 
 
@@ -345,8 +380,11 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
     group_by(main_id, cell) %>%
     mutate(group_abund = sum(abund),
            rel_abund = abund / group_abund,
-           gene_plot_2 = ifelse(abund < abund_filter, "Low Abundance", gene_plot_noid),
-           x_axis = paste(location, "\n", cell, "\n", "n = ", sum(abund), sep = "")) %>%
+           gene_plot_2 = ifelse(abund < abund_filter, "Low Abundance", gene_plot),
+           x_axis = paste0(location, "\n",
+                          gsub(" ", "\n", cell),
+                          "\n",
+                          "n = ", sum(abund))) %>%
     arrange(desc(rel_abund))
   
   uniq_genes <- unique(df_rel$gene_plot_2)
@@ -358,6 +396,9 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
   colors <- hue_pal()(length(uniq_genes))
   colors[1] <- "#dddddd"
   
+  legend_items <- length(unique(df_rel$gene_plot_2))
+  legend_ncol <- legend_items %/% 10 + 1
+  
   g <- ggplot(df_rel, aes(x = x_axis, y = rel_abund, fill = gene_plot_2)) +
     geom_bar(stat = "identity") +
     theme_classic() +
@@ -365,14 +406,16 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
           panel.grid.minor.x = element_blank(),
           legend.title = element_blank(),
           legend.text = element_text(size = 6),
-          legend.position = "bottom") +
+          legend.position = "right") +
+    guides(fill = guide_legend(override.aes = list(size = 1),
+                           ncol = legend_ncol)) +
     scale_fill_manual(values = colors) +
     labs(title = p,
          x = "Patient and Cell Type (n = total inferred cells)",
-         y = paste0("Relative sonic abund \n(Low Abund < ", abund_filter, " sonic abund)")) +
-    guides(color = guide_legend(override.aes = list(size = 0.1)))
+         y = paste0("Relative sonic abundance \n",
+         "(Low Abundance < ", abund_filter, " sonic abund)"))
   
-  scaled_g <- egg::set_panel_size(g, height=unit(6, "cm"),
+  scaled_g <- egg::set_panel_size(g, height=unit(3, "cm"),
                           width=unit(length(unique(df_rel$x_axis)) + 3.5, "cm"))
   
   return(scaled_g)
@@ -384,16 +427,23 @@ clonal_graphs <- list()
 for (p in uniq_patients) {
   if (startsWith(p, "A_")) {
     clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Acute")
+  } else if (startsWith(p, "C_")) {
+    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Chronic")
   } else {
-    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "ART-treated")
+    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "ART")
   }
 }
 
 art_rel_abund <- cowplot::plot_grid(clonal_graphs[["A"]], clonal_graphs[["B"]], clonal_graphs[["C"]], ncol = 1, align = "h")
-cowplot::save_plot("figs/rel_abund_art.pdf", art_rel_abund, base_width = NULL, base_height = 25, device = "pdf")
+cowplot::save_plot("figs/rel_abund_art.svg", art_rel_abund, base_width = NULL, base_height = 25, device = "svg")
 
 acute_rel_abund <- cowplot::plot_grid(clonal_graphs[["A_D"]], clonal_graphs[["A_E"]], clonal_graphs[["A_F"]], ncol = 1, align = "h")
-cowplot::save_plot("figs/rel_abund_acute.pdf", acute_rel_abund, base_width = NULL, base_height = 25, device = "pdf")
+cowplot::save_plot("figs/rel_abund_acute.svg",
+                   acute_rel_abund, base_width = NULL, base_height = 25, device = "svg")
+
+chronic_rel_abund <- cowplot::plot_grid(clonal_graphs[["C_G"]], clonal_graphs[["C_H"]], clonal_graphs[["C_I"]], ncol = 1, align = "h")
+cowplot::save_plot("figs/rel_abund_chronic.svg",
+                   chronic_rel_abund, base_width = NULL, base_height = 25, device = "svg")
 
 # 
 # ggarrange(clonal_graphs[["A"]], clonal_graphs[["B"]], nrow=1)
@@ -502,7 +552,7 @@ make_legend <- function(cell_colors, uniq_cells, fn) {
   # leg <- cowplot::get_legend(g)
   # grid.newpage()
   # grid.draw(leg)
-  ggsave(fn, plot = g, device = "svg", width = 8)
+  ggsave(fn, plot = g, device = "svg", width = 9)
 }
 
 make_legend(cell_colors_art,
@@ -663,24 +713,24 @@ txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
 
 gr_anno <- annotatePeak(gr_compiled, TxDb = txdb, annoDb = "org.Hs.eg.db", overlap = "all")
 
-uniq_cells <- unique(gr_compiled$cell)
-for (cell in uniq_cells) {
-  gr_subset <- gr_compiled[gr_compiled$cell == cell]
-  if (length(gr_subset < 10)) {
-    next
-  }
-  
-  print(cell)
-  gr_subset_anno <- annotatePeak(gr_subset,
-                            TxDb = txdb,
-                            annoDb = "org.Hs.eg.db",
-                            overlap = "all",
-                            verbose = FALSE)
-  
-  pdf(paste0("figs/upsetplot_", cell, ".pdf"), width = 6, height = 4)
-  print(upsetplot(gr_subset_anno))
-  dev.off()
-}
+# uniq_cells <- unique(gr_compiled$cell)
+# for (cell in uniq_cells) {
+#   gr_subset <- gr_compiled[gr_compiled$cell == cell]
+#   if (length(gr_subset < 10)) {
+#     next
+#   }
+#   
+#   print(cell)
+#   gr_subset_anno <- annotatePeak(gr_subset,
+#                             TxDb = txdb,
+#                             annoDb = "org.Hs.eg.db",
+#                             overlap = "all",
+#                             verbose = FALSE)
+#   
+#   pdf(paste0("figs/upsetplot_", cell, ".pdf"), width = 6, height = 4)
+#   print(upsetplot(gr_subset_anno))
+#   dev.off()
+# }
 
 pdf(paste0("figs/upsetplot_", 'general', ".pdf"), onefile = FALSE, width = 6, height = 4)
 upsetplot(gr_anno)
@@ -698,7 +748,13 @@ df_anno <- data.frame(gr_anno) %>%
   summarise(percent_feature = sum(abund) / max(group_n) * 100,
             sum_feature = sum(abund),
             group_abund = max(group_n)) %>%
-  mutate(x_axis = paste0(cell, "\n(", group_abund, ")"))
+  mutate(x_axis = paste0(gsub(" ", "\n", cell),
+                         "\n(",
+                         group_abund,
+                         ")")) %>%
+  ungroup() %>%
+  mutate(exp = factor(exp, levels = c("Acute", "Chronic", "ART")),
+         location = factor(location, levels = c("PBMC", "CLN", "ILN", "Tonsil")))
 
 
 # chi square test to test cell subset influence on the genomic site proportions
@@ -713,6 +769,13 @@ df_anno <- data.frame(gr_anno) %>%
 #   chisq.test(., simulate.p.value = TRUE)
 
 
+facet_label_clean <- function(labels) {
+  labels <- lapply(labels, as.character)
+  a <- do.call(paste, c(labels, list(sep = " | ")))
+  
+  return(list(a))
+}
+
 ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = feature)) +
   geom_col(position = position_dodge2(preserve = "single")) +
   labs(fill = "Feature",
@@ -722,11 +785,14 @@ ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = feature)) +
   theme(strip.background = element_rect(fill = "#FFFFFF", colour = "#FFFFFF"),
         strip.text = element_text(face = "bold", size = 10),
         legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8)) +
+        legend.text = element_text(size = 8),
+        axis.text.x = element_text(size = 8)) +
   guides(color = guide_legend(override.aes = list(size = 0.75))) +
-  facet_wrap(~ exp + location, scales = "free_x")
+  facet_wrap(~ exp + location,
+             scales = "free_x",
+             labeller = facet_label_clean)
 
-ggsave(filename = "figs/site_annot_subset.pdf", device = "pdf", width = 9, height = 6)
+ggsave(filename = "figs/site_annot_subset.svg", device = "svg", width = 9, height = 6)
 ```
 
 # in_gene comparison
@@ -792,31 +858,3 @@ all_stats %>%
   # ungroup() %>%
   # dplyr::mutate(adj_freq_test = p.adjust(freq_fisher_test, method = "BH"))
 ```
-
-
-```{r}
-mat_lg <- matrix(rexp(20, rate=.1), ncol = 4)
-
-g_lg <- melt(mat_lg) %>%
-  ggplot(aes(x = Var1, y = Var2, fill = value)) +
-  geom_tile() +
-  theme_bw() +
-  coord_equal()
-
-mat_sm <- matrix(rexp(30, rate = .1), ncol = 10)
-
-g_sm <- melt(mat_sm) %>%
-  ggplot(aes(x = Var1, y = Var2, fill = value)) +
-  geom_tile() +
-  theme_bw() +
-  coord_equal()
-
-library(egg)
-
-p1 <- egg::set_panel_size(g_lg, height=unit(ncol(mat_lg), "cm"),
-                          width=unit(nrow(mat_lg), "cm") )
-p2 <- egg::set_panel_size(g_sm, height=unit(ncol(mat_sm), "cm"),
-                          width=unit(nrow(mat_sm), "cm") )
-cowplot::plot_grid( p1, p2, nrow=1)
-```
-
