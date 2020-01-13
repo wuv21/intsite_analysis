@@ -381,11 +381,14 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
     mutate(group_abund = sum(abund),
            rel_abund = abund / group_abund,
            gene_plot_2 = ifelse(abund < abund_filter, "Low Abundance", gene_plot),
+           plot_lbl = ifelse(gene_plot_2 != "Low Abundance" & rel_abund >= 0.1,
+                             gene_plot_noid,
+                             ""),
            x_axis = paste0(location, "\n",
                           gsub(" ", "\n", cell),
                           "\n",
                           "n = ", sum(abund))) %>%
-    arrange(desc(rel_abund))
+    arrange(rel_abund, .by_group = TRUE)
   
   uniq_genes <- unique(df_rel$gene_plot_2)
     
@@ -399,8 +402,12 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
   legend_items <- length(unique(df_rel$gene_plot_2))
   legend_ncol <- legend_items %/% 10 + 1
   
+  
+  # TODO arrange most dominant on bottom
+  # TODO label top two dominant in graph (geom label)
   g <- ggplot(df_rel, aes(x = x_axis, y = rel_abund, fill = gene_plot_2)) +
     geom_bar(stat = "identity") +
+    geom_text(aes(label = plot_lbl), size = 1, position = position_stack(vjust = 0.5)) +
     theme_classic() +
     theme(panel.grid.major.x = element_blank(),
           panel.grid.minor.x = element_blank(),
