@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, warning=FALSE, message=FALSE}
 library(ggplot2)
 library(tidyverse)
+library(glue)
 library(GenomicRanges)
 library(hiAnnotator)
 library(RColorBrewer)
@@ -28,7 +29,6 @@ library(hotROCs)
 library(reshape2)
 library(svglite)
 library(egg)
-library(glue)
 
 source("scripts/mrc_generator.R")
 source("scripts/heatmapMaker.R")
@@ -601,6 +601,8 @@ make_heatmaps <- function(df, annot_ref, filter_type) {
   df_sites_meta <- convert_to_mrc_acceptable(df)
   sites_mrcs <- generate_mrcs(df_sites_meta)
   
+  return(sites_mrcs)
+  
   # make genomic
   gen_roc_fn <- file.path(heatmap_genomic, "roc.res.rds")
   if (!file.exists(gen_roc_fn)) {
@@ -649,7 +651,8 @@ mark_clonal <- function(exp, abund) {
   clonal <- rep("single", length(abund))
   
   clonal[exp == "Acute" & abund >= 3] <- "clonal"
-  clonal[exp == "ART-treated" & abund >= 2] <- "clonal"
+  clonal[exp == "ART" & abund >= 2] <- "clonal"
+  clonal[exp == "Chronic" & abund >= 2] <- "clonal"
   
   return(clonal)
 }
@@ -662,34 +665,56 @@ df_pre_mrc <- df_compiled %>%
 ```
 
 ```{r}
-# exp and location
-df_pre_mrc %>%
-  mutate(sampleName = paste(exp, location, sep = "_")) %>%
-  make_heatmaps(annot_ref, "exp_location")
-
 # exp and location and cell
-df_pre_mrc %>%
+test <- df_pre_mrc %>%
   mutate(sampleName = paste(exp, location, cell, sep = "_")) %>%
   make_heatmaps(annot_ref, "exp_location_cell")
 
-# exp and clonal
-df_pre_mrc %>%
-  mutate(sampleName = paste(exp, clonal, sep = "_")) %>%
-  make_heatmaps(annot_ref, "exp_clonal")
+for (i in seq_along(rangesToCalc)) {
+  row <- test[i]
+  s <- as.character(seqnames(row))
+  pos <- row@ranges@start + row@ranges@width
+
+  if (is.na(pos) | pos >= seqlengths(hg38)[s]) {
+    print(row)
+  }
+}
+
+
+hg38 <- get("BSgenome.Hsapiens.UCSC.hg38")
+library(BSgenome)
+library(GCcontent)
+
+window_size_GC <- c("100"=100, 
+                      "1k"=1000, "10k"=1e4, "100k"=1e5, "1M"=1e6)
+
+
+sites <- test
+nsites <- length(sites)
+strand(sites) = "+"
+sites.seqinfo.original <- seqinfo(sites)
+isCircular(seqinfo(sites)) <- rep(FALSE, length(seqinfo(sites)))
+
+sites <- rep(sites, length(window_size_GC))
+sites <- GenomicRanges::trim(suppressWarnings(flank(sites, rep(window_size_GC/2, 
+  each = nsites), both = T)))
+seqinfo(sites) = sites.seqinfo.original
+sites
+
+
+rangesToCalc <- GCcontent:::.expand_trim_GRanges(test, window_size_GC)
+seqs <- getSeq(hg38, sites, as.character = F)
+
+# TODO fix the seqlength problem...
 
 # exp and location and clonal
 df_pre_mrc %>%
   mutate(sampleName = paste(exp, location, clonal, sep = "_")) %>%
   make_heatmaps(annot_ref, "exp_location_clonal")
 
-# exp
-df_pre_mrc %>%
-  mutate(sampleName = paste(exp, sep = "_")) %>%
-  make_heatmaps(annot_ref, "exp")
-
 # art_only and location and cell
 df_pre_mrc %>%
-  filter(exp == "ART-treated") %>%
+  filter(exp == "ART") %>%
   mutate(sampleName = paste(location, cell, sep = "_")) %>%
   make_heatmaps(annot_ref, "ARTonly_location_cell")
 
@@ -698,6 +723,12 @@ df_pre_mrc %>%
   filter(exp == "Acute") %>%
   mutate(sampleName = paste(location, cell, sep = "_")) %>%
   make_heatmaps(annot_ref, "Acuteonly_location_cell")
+
+# acute_only and location and cell
+df_pre_mrc %>%
+  filter(exp == "Chronic") %>%
+  mutate(sampleName = paste(location, cell, sep = "_")) %>%
+  make_heatmaps(annot_ref, "Chroniconly_location_cell")
 ```
 
 # overall stat counts
@@ -901,5 +932,6 @@ df_compiled %>%
   theme_classic()
 
 # TODO come up with graph...
+hg38 <- readRDS("reference_hg38.rds")
 ```
 
