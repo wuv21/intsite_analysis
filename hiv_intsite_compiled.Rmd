@@ -30,6 +30,9 @@ library(reshape2)
 library(svglite)
 library(egg)
 
+# known overlapping functions
+trim <- GenomicRanges::trim
+
 source("scripts/mrc_generator.R")
 source("scripts/heatmapMaker.R")
 source("scripts/epigeneticFeatures.R")
@@ -581,13 +584,14 @@ make_legend(cell_colors_chronic,
 ```{r}
 convert_to_mrc_acceptable <- function(df) {
   df_new <- df %>%
+    uncount(floor(abund)) %>%
     group_by(sampleName) %>%
     dplyr::mutate(group_n = n()) %>%
-    dplyr::filter(group_n >= 10) %>%
+    dplyr::filter(group_n >= 30) %>%
     dplyr::ungroup() %>%
     arrange(sampleName) %>%
-    mutate(siteID = row_number(),
-           gender = "m") %>%
+    dplyr::mutate(siteID = row_number(),
+                  gender = "m") %>%
     data.frame()
   
   return(df_new)
@@ -600,8 +604,6 @@ make_heatmaps <- function(df, annot_ref, filter_type) {
   
   df_sites_meta <- convert_to_mrc_acceptable(df)
   sites_mrcs <- generate_mrcs(df_sites_meta)
-  
-  return(sites_mrcs)
   
   # make genomic
   gen_roc_fn <- file.path(heatmap_genomic, "roc.res.rds")
@@ -666,46 +668,45 @@ df_pre_mrc <- df_compiled %>%
 
 ```{r}
 # exp and location and cell
-test <- df_pre_mrc %>%
+df_pre_mrc %>%
   mutate(sampleName = paste(exp, location, cell, sep = "_")) %>%
   make_heatmaps(annot_ref, "exp_location_cell")
 
-for (i in seq_along(rangesToCalc)) {
-  row <- test[i]
-  s <- as.character(seqnames(row))
-  pos <- row@ranges@start + row@ranges@width
-
-  if (is.na(pos) | pos >= seqlengths(hg38)[s]) {
-    print(row)
-  }
-}
-
-
-hg38 <- get("BSgenome.Hsapiens.UCSC.hg38")
-library(BSgenome)
-library(GCcontent)
-
-window_size_GC <- c("100"=100, 
-                      "1k"=1000, "10k"=1e4, "100k"=1e5, "1M"=1e6)
+# for (i in seq_along(rangesToCalc)) {
+#   row <- test[i]
+#   s <- as.character(seqnames(row))
+#   pos <- row@ranges@start + row@ranges@width
+# 
+#   if (is.na(pos) | pos >= seqlengths(hg38)[s]) {
+#     print(row)
+#   }
+# }
 
 
-sites <- test
-nsites <- length(sites)
-strand(sites) = "+"
-sites.seqinfo.original <- seqinfo(sites)
-isCircular(seqinfo(sites)) <- rep(FALSE, length(seqinfo(sites)))
-
-sites <- rep(sites, length(window_size_GC))
-sites <- GenomicRanges::trim(suppressWarnings(flank(sites, rep(window_size_GC/2, 
-  each = nsites), both = T)))
-seqinfo(sites) = sites.seqinfo.original
-sites
-
-
-rangesToCalc <- GCcontent:::.expand_trim_GRanges(test, window_size_GC)
-seqs <- getSeq(hg38, sites, as.character = F)
-
-# TODO fix the seqlength problem...
+# hg38 <- get("BSgenome.Hsapiens.UCSC.hg38")
+# library(BSgenome)
+# library(GCcontent)
+# 
+# window_size_GC <- c("100"=100, 
+#                       "1k"=1000, "10k"=1e4, "100k"=1e5, "1M"=1e6)
+# 
+# 
+# sites <- test
+# nsites <- length(sites)
+# strand(sites) = "+"
+# sites.seqinfo.original <- seqinfo(sites)
+# isCircular(seqinfo(sites)) <- rep(FALSE, length(seqinfo(sites)))
+# 
+# sites <- rep(sites, length(window_size_GC))
+# sites <- GenomicRanges::trim(suppressWarnings(flank(sites, rep(window_size_GC/2, 
+#   each = nsites), both = T)))
+# seqinfo(sites) = sites.seqinfo.original
+# sites
+# 
+# 
+# rangesToCalc <- GCcontent:::.expand_trim_GRanges(test, window_size_GC)
+# seqs <- getSeq(hg38, sites, as.character = F)
+# 
 
 # exp and location and clonal
 df_pre_mrc %>%
