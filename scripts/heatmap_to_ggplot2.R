@@ -104,7 +104,7 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
   }
   
   heatmap_png_fn <- paste0("figs/", heatmap_type, "_", "heatmap", "_", output_suffix, ".png")
-  ggsave(filename = heatmap_png_fn, plot = g, device = "png", height = 10, width = 10)
+  ggsave(filename = heatmap_png_fn, plot = g, device = "png", height = 15, width = 20)
   
   return(g)
 }
