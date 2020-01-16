@@ -67,7 +67,7 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
   
   graph_settings <- list(
     geom_tile(aes(fill = roc), color = "#222222", size = 0.5),
-    geom_text(aes(label = pval_lbl)),
+    geom_text(aes(label = pval_lbl), size = 7),
     scale_fill_gradient2(low = scale_low,
                          high = scale_hi,
                          mid = "white",
@@ -75,7 +75,10 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
                          limits = c(0,1)),
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
           axis.title.y = element_blank(),
+          axis.text.y = element_text(size = 15),
           axis.title.x = element_blank(),
+          legend.title = element_text(size = 15),
+          legend.text =  element_text(size = 15),
           panel.background = element_blank(),
           panel.grid = element_blank()),
     coord_equal())
@@ -100,11 +103,23 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
     g2 <- ggplot(df2, aes(x = sampleName, y = y)) +
       graph_settings
     
-    g <- grid.arrange(g1, g2, nrow = 1)
+    # todo set scale for the different graphs...
+    s_height_1 <- unit(length(unique(df1$y)), "cm")
+    s_width_1 <- unit(length(unique(df1$sampleName)), "cm")
+    
+    s_height_2 <- unit(length(unique(df2$y)), "cm")
+    s_width_2 <- unit(length(unique(df2$sampleName)), "cm")
+    
+    scaled_g1 <- egg::set_panel_size(g1, height = s_height_1, width = s_width_1)
+    scaled_g2 <- egg::set_panel_size(g2, height = s_height_2, width = s_width_2)
+    
+    # g <- grid.arrange(g1, g2, nrow = 1)
+    
+    g <- cowplot::plot_grid(scaled_g1, scaled_g2, nrow=1)
   }
   
-  heatmap_png_fn <- paste0("figs/", heatmap_type, "_", "heatmap", "_", output_suffix, ".png")
-  ggsave(filename = heatmap_png_fn, plot = g, device = "png", height = 15, width = 20)
+  heatmap_png_fn <- paste0("figs/", heatmap_type, "_", "heatmap", "_", output_suffix, ".svg")
+  ggsave(filename = heatmap_png_fn, plot = g, device = "svg", height = 15, width = 20)
   
   return(g)
 }

@@ -454,7 +454,8 @@ cowplot::save_plot("figs/rel_abund_acute.svg",
 
 chronic_rel_abund <- cowplot::plot_grid(clonal_graphs[["C_G"]], clonal_graphs[["C_H"]], clonal_graphs[["C_I"]], ncol = 1, align = "h")
 cowplot::save_plot("figs/rel_abund_chronic.svg",
-                   chronic_rel_abund, base_width = NULL, base_height = 25, device = "svg")
+                   chronic_rel_abund, base_width = NULL,
+                   base_height = 25, device = "svg")
 
 # 
 # ggarrange(clonal_graphs[["A"]], clonal_graphs[["B"]], nrow=1)
