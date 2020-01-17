@@ -394,7 +394,7 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
            x_axis = paste0(location, "\n",
                           gsub(" ", "\n", cell),
                           "\n",
-                          "n = ", sum(abund))) %>%
+                          "(", sum(abund), ")")) %>%
     arrange(rel_abund, .by_group = TRUE)
   
   uniq_genes <- unique(df_rel$gene_plot_2)
@@ -411,7 +411,7 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
   
   g <- ggplot(df_rel, aes(x = x_axis, y = rel_abund, fill = gene_plot_2)) +
     geom_bar(stat = "identity") +
-    geom_text(aes(label = plot_lbl), size = 1, position = position_stack(vjust = 0.5)) +
+    geom_text(aes(label = plot_lbl), size = 2.5, position = position_stack(vjust = 0.5)) +
     theme_classic() +
     theme(panel.grid.major.x = element_blank(),
           panel.grid.minor.x = element_blank(),
