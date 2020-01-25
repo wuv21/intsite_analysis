@@ -19,15 +19,15 @@ library(hiAnnotator)
 library(RColorBrewer)
 library(scales)
 library(circlize)
-library(grid)
-library(gridExtra)
+# library(grid)
+# library(gridExtra)
 library(TxDb.Hsapiens.UCSC.hg38.knownGene)
 library(org.Hs.eg.db)
 library(ChIPseeker)
 library(BSgenome.Hsapiens.UCSC.hg38)
 library(hotROCs)
 library(reshape2)
-library(svglite)
+# library(svglite)
 library(egg)
 
 # known overlapping functions
@@ -39,6 +39,7 @@ source("scripts/epigeneticFeatures.R")
 source("scripts/random_site.R")
 source("scripts/heatmap_to_ggplot2.R")
 source("scripts/hiv_int_helper_fx.R")
+source("scripts/ggplot2_extensions.R")
 ```
 
 # load and merge data files
@@ -188,6 +189,42 @@ df_compiled %>%
 ggsave(filename = "figs/inout_gene_subset.svg", device = "svg", width = 9, height = 6)
 ```
 
+# experiment colors
+```{r}
+tcm_color <- "#b2df8a"
+tem_color <- "#fb9a99"
+gctfh_color <- "#33a02c"
+pos69_color <- "#ff7f00"
+neg69_color <- "#6a3d9a"
+
+xaxis_colors <- c(
+  "T1" = "#ff00ff",
+  "T2" = "#ff11ff",
+  "T3" = "#ff22ff",
+  "A1" = "#ff33ff",
+  "A2" = "#ff44ff",
+  "A3" = "#ff55ff",
+  "C1" = "#ff66ff",
+  "C2" = "#ff77ff",
+  "C3" = "#ff88ff",
+  "CLN" = "#a6cee3",
+  "ILN" = "#1f78b4",
+  "Tonsil" = "#cab2d6",
+  "PBMC" = "#e31a1c",
+  "CD69- Tcm" = tcm_color,
+  "Tcm" = tcm_color,
+  "CD69- Tem" = tem_color,
+  "Tem" = tem_color,
+  "Temra" = "#ffff99",
+  "Naive" = "#b15928",
+  "HLA-DR- GC-Tfh" = gctfh_color,
+  "GC-Tfh" = gctfh_color,
+  "HLA-DR- CD69+" = pos69_color,
+  "CD69+" = pos69_color,
+  "HLA-DR- CD69-" = neg69_color,
+  "CD69-" = neg69_color
+)
+```
 
 # temp explore
 ```{r}
@@ -198,7 +235,6 @@ df_compiled %>%
   arrange(posID, .by_group = TRUE) %>%
   summarise(count = sum(n()))
 ```
-
 
 # patient-wide simulations
 ```{r}
@@ -307,10 +343,8 @@ for (p in uniq_patients) {
 
 # hotspot graph
 ```{r}
-# TODO arrange by patient.
-
 uniq_exp <- unique(df_compiled$exp)
-hotspot_graphs <- list()
+
 for (u in uniq_exp) {
   df_plot_all <- df_compiled %>%
     dplyr::filter(exp == u) %>%
@@ -344,7 +378,6 @@ for (u in uniq_exp) {
   
   cs <- base::colSums(sim_matrix)
   
-  # element_text(angle = 45, vjust = 1, hjust = 1, size = 7),
   heatmap_theme <- theme(axis.text.x = element_text(size = 7, lineheight = 2),
                          axis.title.x = element_blank(),
                          panel.background = element_rect(fill = "#132b43"),
@@ -361,11 +394,10 @@ for (u in uniq_exp) {
 
   of_interest <- melted_sim %>%
     dplyr::filter(Var2 %in% col_of_interest) %>%
-    mutate(cell = gsub(" ", "\n", cell),
-           x_lbl = glue("{patient}\n{sample_type}\n{cell}"))
+    mutate(x_lbl = glue("{patient}\n{sample_type}\n{cell}"))
   
   g <- ggplot(of_interest, aes(x_lbl, factor(Var2), fill = value)) +
-    geom_tile(fill = "#56b1f7", width = 1, height = 1) +
+    geom_tile(fill = "#56b1f7", width = 1, height = 1, color = "#ffffff") +
     scale_y_discrete(breaks = col_of_interest,
                      labels = levels(df_plot_all$nearest_gene)[col_of_interest]) +
     theme_bw() +
@@ -373,19 +405,21 @@ for (u in uniq_exp) {
     heatmap_theme +
     coord_equal()
   
-  panel_scale <- 1
-  p <- egg::set_panel_size(g, height=unit(length(col_of_interest) / panel_scale, "cm"),
-                          width=unit(length(unique(of_interest$Var1)) / panel_scale, "cm") )
+  p1_x <- ggplot_build(g)$layout$panel_params[[1]]$x.labels
+  p1_y <- ggplot_build(g)$layout$panel_params[[1]]$y.labels
   
-  hotspot_graphs[[u]] <- p
+  panel_scale <- 1
+  p <- egg::set_panel_size(g, height=unit(length(p1_y) / panel_scale, "cm"),
+                          width=unit(length(unique(p1_x)) / panel_scale, "cm"))
+  
+  
+  p2 <- make_xaxis_plot(p1_x, c("Patient", "Compartment", "Cell"), xaxis_colors, sep = "\n")
+  
+  p_comb <- cowplot::plot_grid(p, p2, ncol = 1, align = "v")
+  
+  ggsave(glue("figs/overlap_hotspot_{u}.svg"),
+       device = "svg", width = 30, height = 40, units = "cm")
 }
-
-cowplot::plot_grid(hotspot_graphs[["Acute"]],
-                   hotspot_graphs[["ART"]],
-                   hotspot_graphs[["Chronic"]], nrow=1)
-
-ggsave(paste0("figs/", "overlap_hotspot_final.svg"),
-       device = "svg", width = 70, height = 40, units = "cm")
 ```
 
 
