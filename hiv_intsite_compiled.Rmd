@@ -417,7 +417,7 @@ for (u in uniq_exp) {
   
   p_comb <- cowplot::plot_grid(p, p2, ncol = 1, align = "v")
   
-  ggsave(glue("figs/overlap_hotspot_{u}.svg"),
+  ggsave(glue("figs/overlap_hotspot_{u}.svg"), plot = p_comb,
        device = "svg", width = 30, height = 40, units = "cm")
 }
 ```
