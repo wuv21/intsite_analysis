@@ -13,7 +13,7 @@ pull_names <- function(query, prefix) {
   return(to_num)
 }
 
-heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_suffix) {
+heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_suffix, sep_levels) {
   stopifnot(heatmap_type %in% c("genomic", "epigenetic"))
   
   rds <- readRDS(heatmap_rds)
@@ -73,12 +73,12 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
                          mid = "white",
                          midpoint = 0.5,
                          limits = c(0,1)),
-    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-          axis.title.y = element_blank(),
+    theme(axis.title = element_blank(),
+          axis.text.x = element_text(angle = 90, hjust = 0.5),
           axis.text.y = element_text(size = 15),
-          axis.title.x = element_blank(),
           legend.title = element_text(size = 15),
           legend.text =  element_text(size = 15),
+          legend.position = "none",
           panel.background = element_blank(),
           panel.grid = element_blank()),
     coord_equal())
@@ -86,6 +86,17 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
   if (heatmap_type == "genomic") {
     g <- ggplot(df, aes(x = sampleName, y = y)) +
       graph_settings
+    
+    p1_x <- ggplot_build(g)$layout$panel_params[[1]]$x.labels
+    p1_y <- ggplot_build(g)$layout$panel_params[[1]]$y.labels
+    
+    p <- egg::set_panel_size(g,
+                             height=unit(length(p1_y), "cm"),
+                             width=unit(length(unique(p1_x)), "cm"))
+    
+    p2 <- make_xaxis_plot(p1_x, sep_levels, xaxis_colors, sep = "_")
+    
+    p_comb <- cowplot::plot_grid(p, p2, ncol = 1, align = "v")
     
   } else {
     level_mid <- ceiling(length(levels(df$y)) / 2)
@@ -103,23 +114,45 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
     g2 <- ggplot(df2, aes(x = sampleName, y = y)) +
       graph_settings
     
-    # todo set scale for the different graphs...
+    p1_x <- ggplot_build(g1)$layout$panel_params[[1]]$x.labels
+    p2_x <- ggplot_build(g2)$layout$panel_params[[1]]$x.labels
+    
     s_height_1 <- unit(length(unique(df1$y)), "cm")
     s_width_1 <- unit(length(unique(df1$sampleName)), "cm")
     
     s_height_2 <- unit(length(unique(df2$y)), "cm")
     s_width_2 <- unit(length(unique(df2$sampleName)), "cm")
     
-    scaled_g1 <- egg::set_panel_size(g1, height = s_height_1, width = s_width_1)
-    scaled_g2 <- egg::set_panel_size(g2, height = s_height_2, width = s_width_2)
+    g1 <- egg::set_panel_size(g1, height = s_height_1, width = s_width_1)
+    g2 <- egg::set_panel_size(g2, height = s_height_2, width = s_width_2)
     
-    # g <- grid.arrange(g1, g2, nrow = 1)
+    p1 <- make_xaxis_plot(p1_x, sep_levels, xaxis_colors, sep = "_")
+    p1_g1 <- cowplot::plot_grid(g1, p1, ncol = 1, align = "v")
     
-    g <- cowplot::plot_grid(scaled_g1, scaled_g2, nrow=1)
+    p2 <- make_xaxis_plot(p2_x, sep_levels, xaxis_colors, sep = "_")
+    p2_g2 <- cowplot::plot_grid(g2, p2, ncol = 1, align = "v")
+    
   }
   
-  heatmap_png_fn <- paste0("figs/", heatmap_type, "_", "heatmap", "_", output_suffix, ".svg")
-  ggsave(filename = heatmap_png_fn, plot = g, device = "svg", height = 15, width = 20)
+  general_fn <- glue("figs/{heatmap_type}_heatmap_{output_suffix}")
+  save_height <- 24
   
-  return(g)
+  if (heatmap_type == "genomic") {
+    cowplot::save_plot(filename = glue("{general_fn}.svg"),
+                       plot = p_comb,
+                       device = "svg",
+                       base_height = save_height)
+  } else {
+    cowplot::save_plot(filename = glue("{general_fn}_1.svg"),
+                       plot = p1_g1,
+                       device = "svg",
+                       base_height = save_height)
+    
+    cowplot::save_plot(filename = glue("{general_fn}_2.svg"),
+                       plot = p2_g2,
+                       device = "svg",
+                       base_height = save_height)
+  }
+  
+  return(TRUE)
 }
