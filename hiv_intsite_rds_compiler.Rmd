@@ -35,12 +35,12 @@ names(raw_xofil_rdss) <- rds_list_names
 ```
 
 ```{r}
+# fix art_1
 parse_art_1 <- function(gr) {
   df <- data.frame(gr) %>%
     mutate(samplename = gsub("^sample", "", samplename)) %>%
-    separate(samplename, sep = "-", into = c("main_id", "rep_id")) %>%
+    separate(samplename, sep = "-", into = c("main_id", "primer_id", "rep_id")) %>%
     mutate(rep_id = as.numeric(rep_id),
-           primer_id = ifelse(rep_id < 5, "u5", "u3"),
            rep_id = (rep_id - 1) %% 4 + 1)
   
   return(df)
@@ -48,8 +48,8 @@ parse_art_1 <- function(gr) {
 
 parse_art_5 <- function(gr) {
   df <- data.frame(gr) %>%
-    separate(samplename, sep = "_",
-             into = c("sample", "primer_id"),
+    separate(samplename, sep = "-",
+             into = c("main_id", "primer_id", "rep_id"),
              remove = TRUE)
   
   return(df)
