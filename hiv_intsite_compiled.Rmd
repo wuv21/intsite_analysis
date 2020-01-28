@@ -799,7 +799,7 @@ gr_anno <- annotatePeak(gr_compiled, TxDb = txdb, annoDb = "org.Hs.eg.db", overl
 #   dev.off()
 # }
 
-svg(glue("figs/upsetplot_general.svg"), onefile = FALSE, width = 6, height = 4)
+pdf(glue("figs/upsetplot_general.pdf"), onefile = FALSE, width = 6, height = 4)
 upsetplot(gr_anno)
 dev.off()
 
