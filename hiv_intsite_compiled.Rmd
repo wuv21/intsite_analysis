@@ -27,7 +27,7 @@ library(ChIPseeker)
 library(BSgenome.Hsapiens.UCSC.hg38)
 library(hotROCs)
 library(reshape2)
-# library(svglite)
+library(svglite)
 library(egg)
 
 # known overlapping functions
@@ -435,7 +435,7 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
   }
   
   df_rel <- df %>%
-    dplyr::filter(patient_anon == p) %>%
+    dplyr::filter(patient_anon_v2 == p) %>%
     ungroup() %>%
     group_by(main_id, cell) %>%
     mutate(group_abund = sum(abund),
@@ -486,26 +486,26 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
   # ggsave(paste0("figs/", "rel_abund_", p, ".png"), device = "png", bg = "transparent")
 }
 
-uniq_patients <- unique(df_compiled$patient_anon)
+uniq_patients <- unique(df_compiled$patient_anon_v2)
 clonal_graphs <- list()
 for (p in uniq_patients) {
-  if (startsWith(p, "A_")) {
+  if (startsWith(p, "T")) {
     clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Acute")
-  } else if (startsWith(p, "C_")) {
+  } else if (startsWith(p, "C")) {
     clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Chronic")
   } else {
     clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "ART")
   }
 }
 
-art_rel_abund <- cowplot::plot_grid(clonal_graphs[["A"]], clonal_graphs[["B"]], clonal_graphs[["C"]], ncol = 1, align = "h")
+art_rel_abund <- cowplot::plot_grid(clonal_graphs[["T1"]], clonal_graphs[["T2"]], clonal_graphs[["T3"]], ncol = 1, align = "h")
 cowplot::save_plot("figs/rel_abund_art.svg", art_rel_abund, base_width = NULL, base_height = 25, device = "svg")
 
-acute_rel_abund <- cowplot::plot_grid(clonal_graphs[["A_D"]], clonal_graphs[["A_E"]], clonal_graphs[["A_F"]], ncol = 1, align = "h")
+acute_rel_abund <- cowplot::plot_grid(clonal_graphs[["A1"]], clonal_graphs[["A2"]], clonal_graphs[["A3"]], ncol = 1, align = "h")
 cowplot::save_plot("figs/rel_abund_acute.svg",
                    acute_rel_abund, base_width = NULL, base_height = 25, device = "svg")
 
-chronic_rel_abund <- cowplot::plot_grid(clonal_graphs[["C_G"]], clonal_graphs[["C_H"]], clonal_graphs[["C_I"]], ncol = 1, align = "h")
+chronic_rel_abund <- cowplot::plot_grid(clonal_graphs[["C1"]], clonal_graphs[["C2"]], clonal_graphs[["C3"]], ncol = 1, align = "h")
 cowplot::save_plot("figs/rel_abund_chronic.svg",
                    chronic_rel_abund, base_width = NULL,
                    base_height = 25, device = "svg")
@@ -516,7 +516,7 @@ cowplot::save_plot("figs/rel_abund_chronic.svg",
 
 # circos plot
 ```{r}
-uniq_patients <- unique(df_compiled$patient_anon)
+uniq_patients <- unique(df_compiled$patient_anon_v2)
 # uniq_cells <- unique(paste(df_compiled$location, df_compiled$cell, sep = "_"))
 # cell_colors <- brewer.pal(length(uniq_cells), "Paired")
 
@@ -546,12 +546,12 @@ arrange_posID <- function(posID) {
 }
 
 for (p in uniq_patients) {
-  if (grepl("A_", p)) {
+  if (grepl("A", p)) {
     cell_colors <- cell_colors_acute
     uniq_cells <- df_uniq_cells_acute$sample_cell
     abund_threshold <- 3
     
-  } else if (grepl("C_", p )) {
+  } else if (grepl("C", p )) {
     cell_colors <- cell_colors_chronic
     uniq_cells <- df_uniq_cells_chronic$sample_cell
     abund_threshold <- 2
@@ -565,7 +565,7 @@ for (p in uniq_patients) {
   df_chord_test <- df_compiled %>%
     mutate(sample_cell = factor(paste(location, cell, sep = "_"),
                                 levels = uniq_cells)) %>%
-    dplyr::filter(patient_anon == p) %>%
+    dplyr::filter(patient_anon_v2 == p) %>%
     ungroup() %>%
     arrange(sample_cell) %>%
     group_by(sample_cell) %>%
