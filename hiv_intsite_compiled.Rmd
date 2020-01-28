@@ -345,6 +345,8 @@ for (p in uniq_patients) {
 ```
 
 # hotspot graph
+## FIG 3
+
 ```{r}
 uniq_exp <- unique(df_compiled$exp)
 
@@ -426,6 +428,8 @@ for (u in uniq_exp) {
 ```
 
 # clonal expansion graph
+## FIG 4
+
 ```{r}
 make_clonal_expansion_graph <- function(df, p, exp_type) {
   if (exp_type == "Acute") {
@@ -515,13 +519,15 @@ cowplot::save_plot("figs/rel_abund_chronic.svg",
 ```
 
 # circos plot
+## FIG 5
+
 ```{r}
 uniq_patients <- unique(df_compiled$patient_anon_v2)
 # uniq_cells <- unique(paste(df_compiled$location, df_compiled$cell, sep = "_"))
 # cell_colors <- brewer.pal(length(uniq_cells), "Paired")
 
 df_uniq_cells <- df_compiled %>%
-  mutate(sample_cell = paste(location, cell, sep = "_")) %>%
+  mutate(sample_cell = paste(location, cell, sep = " | ")) %>%
   group_by(exp) %>%
   distinct(sample_cell)
 
@@ -563,7 +569,7 @@ for (p in uniq_patients) {
   }
   
   df_chord_test <- df_compiled %>%
-    mutate(sample_cell = factor(paste(location, cell, sep = "_"),
+    mutate(sample_cell = factor(paste(location, cell, sep = " | "),
                                 levels = uniq_cells)) %>%
     dplyr::filter(patient_anon_v2 == p) %>%
     ungroup() %>%
@@ -719,6 +725,8 @@ df_pre_mrc <- df_compiled %>%
          position = as.numeric(str_extract(posID, "(?<=[+-])(\\d*$)")))
 ```
 
+## FIG 2
+
 ```{r}
 # exp and location and cell
 df_pre_mrc %>%
@@ -764,6 +772,8 @@ df_compiled %>%
 ```
 
 # site annotations
+## FIG 1
+
 ```{r}
 covplot(gr_compiled, title = "Integration site distribution over chromosome")
 txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
@@ -789,7 +799,7 @@ gr_anno <- annotatePeak(gr_compiled, TxDb = txdb, annoDb = "org.Hs.eg.db", overl
 #   dev.off()
 # }
 
-pdf(paste0("figs/upsetplot_", 'general', ".pdf"), onefile = FALSE, width = 6, height = 4)
+svg(glue("figs/upsetplot_general.svg"), onefile = FALSE, width = 6, height = 4)
 upsetplot(gr_anno)
 dev.off()
 
