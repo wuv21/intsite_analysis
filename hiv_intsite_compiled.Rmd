@@ -152,43 +152,6 @@ df_compiled %>%
               row.names = FALSE, quote = FALSE, sep = "\t")
 ```
 
-# in/out of gene
-```{r}
-df_compiled %>%
-  ungroup() %>%
-  mutate(feature = ifelse(in_gene == "FALSE", "Outside", "In")) %>%
-  group_by(exp, location, cell) %>%
-  mutate(group_n = sum(abund)) %>%
-  group_by(exp, location, cell, feature) %>%
-  summarise(percent_feature = sum(abund) / max(group_n) * 100,
-            sum_feature = sum(abund),
-            group_abund = max(group_n)) %>%
-  mutate(x_axis = paste0(gsub(" ", "\n", cell),
-                         "\n(",
-                         group_abund,
-                         ")")) %>%
-  ungroup() %>%
-  mutate(exp = factor(exp, levels = c("Acute", "Chronic", "ART")),
-         location = factor(location, levels = c("PBMC", "CLN", "ILN", "Tonsil"))) %>%
-  ggplot(aes(x = x_axis, y = percent_feature, fill = feature)) +
-  geom_col(position = position_dodge2(preserve = "single")) +
-  labs(fill = "Feature",
-       y = "% sonic abundance",
-       x = "Cell subset\n(total sonic abundance)") +
-  theme_classic() +
-  theme(strip.background = element_rect(fill = "#FFFFFF", colour = "#FFFFFF"),
-        strip.text = element_text(face = "bold", size = 10),
-        legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8),
-        axis.text.x = element_text(size = 8)) +
-  guides(color = guide_legend(override.aes = list(size = 0.75))) +
-  facet_wrap(~ exp + location,
-             scales = "free_x",
-             labeller = facet_label_clean)
-
-ggsave(filename = "figs/inout_gene_subset.svg", device = "svg", width = 9, height = 6)
-```
-
 # experiment colors
 ```{r}
 tcm_color <- "#b2df8a"
@@ -227,16 +190,6 @@ xaxis_colors <- c(
   "HLA-DR- CD69-" = neg69_color,
   "CD69-" = neg69_color
 )
-```
-
-# temp explore
-```{r}
-# checking overlap
-df_compiled %>% 
-  group_by(patient_anon, posID) %>%
-  filter(n() > 1) %>%
-  arrange(posID, .by_group = TRUE) %>%
-  summarise(count = sum(n()))
 ```
 
 # patient-wide simulations
@@ -778,30 +731,26 @@ df_compiled %>%
 covplot(gr_compiled, title = "Integration site distribution over chromosome")
 txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
 
+# regular from gr_compiled
 gr_anno <- annotatePeak(gr_compiled, TxDb = txdb, annoDb = "org.Hs.eg.db", overlap = "all")
 
-# uniq_cells <- unique(gr_compiled$cell)
-# for (cell in uniq_cells) {
-#   gr_subset <- gr_compiled[gr_compiled$cell == cell]
-#   if (length(gr_subset < 10)) {
-#     next
-#   }
-#   
-#   print(cell)
-#   gr_subset_anno <- annotatePeak(gr_subset,
-#                             TxDb = txdb,
-#                             annoDb = "org.Hs.eg.db",
-#                             overlap = "all",
-#                             verbose = FALSE)
-#   
-#   pdf(paste0("figs/upsetplot_", cell, ".pdf"), width = 6, height = 4)
-#   print(upsetplot(gr_subset_anno))
-#   dev.off()
-# }
+# decounted to allow for easier chipseeker functions
+gr_long <- df_compiled %>%
+  ungroup() %>%
+  uncount(floor(abund), .id = "uncount_id") %>%
+  makeGRangesFromDataFrame(., keep.extra.columns = TRUE)
+
+gr_long_anno <- annotatePeak(gr_long, TxDb = txdb, annoDb = "org.Hs.eg.db", overlap = "all")
 
 pdf(glue("figs/upsetplot_general.pdf"), onefile = FALSE, width = 6, height = 4)
-upsetplot(gr_anno)
+upsetplot(gr_long_anno)
 dev.off()
+
+pdf(glue("figs/annopie_general.pdf"), onefile = FALSE, width = 6, height = 4)
+plotAnnoPie(gr_long_anno)
+dev.off()
+
+plotDistToTSS(gr_long_anno)
 
 df_anno <- data.frame(gr_anno) %>%
   mutate(feature = case_when(grepl("Intron", annotation) ~ "Intron",
@@ -961,5 +910,29 @@ df_compiled %>%
 
 # TODO come up with graph...
 hg38 <- readRDS("reference_hg38.rds")
+```
+
+# gene  annotation
+## SUP FIGS
+```{r}
+get_unique_ingene <- function(df, .filter_crit, .group_var, fn) {
+  .filter_crit <- enquo(.filter_crit)
+  .group_var <- enquo(.group_var)
+  
+  genes <- df %>%
+    dplyr::filter(!!.filter_crit & in_gene != "FALSE") %>%
+    group_by(!!.group_var) %>%
+    summarize(res = str_c(unique(in_gene), collapse = ","))
+  
+  write.table(genes,
+              file = glue("gene_annots/{fn}"),
+              sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
+  
+  return(genes)
+}
+
+get_unique_ingene(df_compiled, exp == "Acute", location, "acute_by_loc.tsv")
+get_unique_ingene(df_compiled, exp == "Chronic", location, "chronic_by_loc.tsv")
+get_unique_ingene(df_compiled, exp == "ART", location, "art_by_loc.tsv")
 ```
 
