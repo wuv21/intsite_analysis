@@ -223,7 +223,7 @@ calc_overlap <- function(ids, bin_index) {
   return(total_count)
 }
 
-uniq_patients <- unique(df_compiled$patient_anon)
+uniq_patients <- unique(df_compiled$patient_anon_v2)
 graphs <- list()
 
 # p <- "B"
@@ -233,7 +233,7 @@ for (p in uniq_patients) {
   print(paste("Running simulation for", p))
   
   trial_df <- df_compiled %>%
-    filter(patient_anon == p) %>%
+    filter(patient_anon_v2 == p) %>%
     mutate(location_cell = paste(location, cell, sep = "_")) %>%
     mutate(group_id = group_indices(., location_cell)) %>%
     arrange(group_id)
@@ -750,7 +750,9 @@ pdf(glue("figs/annopie_general.pdf"), onefile = FALSE, width = 6, height = 4)
 plotAnnoPie(gr_long_anno)
 dev.off()
 
+pdf(glue("figs/distTSS_general.pdf"), onefile = FALSE, width = 6, height = 4)
 plotDistToTSS(gr_long_anno)
+dev.off()
 
 df_anno <- data.frame(gr_anno) %>%
   mutate(feature = case_when(grepl("Intron", annotation) ~ "Intron",
@@ -827,8 +829,9 @@ get_loci_id <- function(gr){
 
 all_in_gene <- findOverlaps(mod_refGenes, gr_compiled, maxgap = 5000, ignore.strand = TRUE)
 
-art_patients <- c("A", "B", "C")
-acute_patients <- c("A_D", "A_E", "A_F")
+art_patients <- c("T1", "T2", "T3")
+acute_patients <- c("A1", "A2", "A3")
+chronic_patients <- c("C1", "C2", "C3")
 
 all_stats <- as.data.frame(gr_compiled[subjectHits(all_in_gene)], row.names = NULL) %>%
   mutate(loci = get_loci_id(mod_refGenes[queryHits(all_in_gene)]),
@@ -836,43 +839,90 @@ all_stats <- as.data.frame(gr_compiled[subjectHits(all_in_gene)], row.names = NU
     gene_ort = as.character(strand(mod_refGenes[queryHits(all_in_gene)])),
     gene_width = (width(mod_refGenes$name[queryHits(all_in_gene)]) + 10000) / 1000,
     strand = as.character(strand)) %>%
-  dplyr::select(loci, gene_name, gene_ort, posID, gene_width, strand, abund, exp, patient_anon) %>%
+  dplyr::select(loci, gene_name, gene_ort, posID,
+                gene_width, strand, abund, exp, patient_anon_v2) %>%
   group_by(loci, gene_name, gene_ort, gene_width) %>%
-  summarise(n_patients = n_distinct(patient_anon),
-            acute_n_patients = n_distinct(patient_anon[patient_anon %in% acute_patients]),
-            art_n_patients = n_distinct(patient_anon[patient_anon %in% art_patients]),
+  summarise(n_patients = n_distinct(patient_anon_v2),
+            acute_n_patients = n_distinct(patient_anon_v2[patient_anon_v2 %in% acute_patients]),
+            art_n_patients = n_distinct(patient_anon_v2[patient_anon_v2 %in% art_patients]),
+            chronic_n_patients = n_distinct(patient_anon_v2[patient_anon_v2 %in% chronic_patients]),
             n_sites = n_distinct(posID),
-            acute_n_sites = n_distinct(posID[patient_anon %in% acute_patients]),
-            art_n_sites = n_distinct(posID[patient_anon %in% art_patients]))
+            acute_n_sites = n_distinct(posID[patient_anon_v2 %in% acute_patients]),
+            art_n_sites = n_distinct(posID[patient_anon_v2 %in% art_patients]),
+            chronic_n_sites = n_distinct(posID[patient_anon_v2 %in% chronic_patients]))
 
 
 acute_df <- df_compiled %>% filter(exp == "Acute")
-art_df <- df_compiled %>% filter(exp == "ART-treated")
+art_df <- df_compiled %>% filter(exp == "ART")
+chronic_df <- df_compiled %>% filter(exp == "Chronic")
 
-total_acute_sites <- length(unique(paste(acute_df$patient_anon, acute_df$posID)))
-total_art_sites <- length(unique(paste(art_df$patient_anon, art_df$posID)))
+total_acute_sites <- length(unique(paste(acute_df$patient_anon_v2, acute_df$posID)))
+total_art_sites <- length(unique(paste(art_df$patient_anon_v2, art_df$posID)))
+total_chronic_sites <- length(unique(paste(chronic_df$patient_anon_v2, art_df$posID)))
+
 total_pat_sites <- length(unique(paste(df_compiled$patient, df_compiled$posID)))
 
-all_stats %>%
-  dplyr::filter(n_patients > 0) %>%
-  ungroup() %>%
-  mutate(acute_freq = acute_n_sites / (gene_width * total_acute_sites),
-         art_freq = art_n_sites / (gene_width * total_art_sites),
-         freq_diff = (art_freq - acute_freq),
-         pct_chg = 100 * freq_diff / acute_freq) %>%
-  dplyr::filter(art_n_patients >= 1, art_n_sites >= 2, acute_n_sites > 0) %>%
-  arrange(desc(pct_chg)) %>%
-  dplyr::select(gene_name, acute_n_patients, art_n_patients,
-                acute_n_sites, art_n_sites, acute_freq, art_freq, pct_chg) %>%
-  write.csv(x = ., file = "site_enrichment.csv", row.names = FALSE, quote = FALSE)
-  # dplyr::mutate(id = seq_len(n())) %>%
-  # dplyr::group_by(id) %>%
-  # dplyr::mutate(freq_fisher_test = fisher.test(
-  #   matrix(
-  #     c(acute_n_sites, art_n_sites, total_acute_sites, total_pat_sites), 
-  #     ncol = 2))$p.value) %>%
-  # ungroup() %>%
-  # dplyr::mutate(adj_freq_test = p.adjust(freq_fisher_test, method = "BH"))
+compare_enrichment <- function(all_stats, exp_a, exp_b) {
+  a_df <- df_compiled %>% filter(exp == exp_a)
+  b_df <- df_compiled %>% filter(exp == exp_b)
+  
+  total_a_sites <- length(unique(paste(a_df$patient_anon_v2, a_df$posID)))
+  total_b_sites <- length(unique(paste(b_df$patient_anon_v2, b_df$posID)))
+  
+  a_pts_lbl <- sym(glue("{tolower(exp_a)}_n_patients"))
+  b_pts_lbl <- sym(glue("{tolower(exp_b)}_n_patients"))
+  
+  a_sites_lbl <- sym(glue("{tolower(exp_a)}_n_sites"))
+  b_sites_lbl <- sym(glue("{tolower(exp_b)}_n_sites"))
+  
+  res <- all_stats %>%
+    dplyr::filter(n_patients > 0) %>%
+    ungroup() %>%
+    mutate(a_freq = !!a_sites_lbl / (gene_width * total_a_sites),
+           b_freq = !!b_sites_lbl / (gene_width * total_b_sites),
+           pct_chg = 100 * (b_freq - a_freq) / a_freq) %>%
+    dplyr::filter(!is.nan(pct_chg)) %>%
+    dplyr::filter(!!a_sites_lbl >= 1 & !!b_sites_lbl >= 1) %>%
+    dplyr::select(gene_name,
+                  !!a_sites_lbl, !!b_sites_lbl,
+                  !!a_pts_lbl, !!b_pts_lbl,
+                  a_freq, b_freq,
+                  pct_chg) %>%
+    arrange(pct_chg)
+  
+  return(res)
+}
+
+#TODO fix filtering...
+
+compare_enrichment(all_stats, "Acute", "ART")
+compare_enrichment(all_stats, "Acute", "Chronic")
+compare_enrichment(all_stats, "Chronic", "ART")
+
+# all_stats %>%
+#   dplyr::filter(n_patients > 0) %>%
+#   ungroup() %>%
+#   mutate(acute_freq = acute_n_sites / (gene_width * total_acute_sites),
+#          art_freq = art_n_sites / (gene_width * total_art_sites),
+#          chronic_freq = chronic_n_sites / (gene_width * total_chronic_sites),
+#          acute_art_pct_chg = 100 * (art_freq - acute_freq) / acute_freq,
+#          acute_chronic_pct_chg = 100 * (chronic_freq - acute_freq) / acute_freq,
+#          chronic_art_pct_chg = 100 * (art_freq - chronic_freq) / chronic_freq) %>%
+#   dplyr::filter(art_n_patients >= 1, art_n_sites >= 2, acute_n_sites > 0) %>%
+#     
+#   arrange(desc(pct_chg)) %>%
+#   dplyr::select(gene_name, acute_n_patients, art_n_patients,
+#                 acute_n_sites, art_n_sites, acute_freq, art_freq, pct_chg)
+#   # write.csv(x = ., file = "site_enrichment.csv", row.names = FALSE, quote = FALSE)
+# 
+#   dplyr::mutate(id = seq_len(n())) %>%
+#   dplyr::group_by(id) %>%
+#   dplyr::mutate(freq_fisher_test = fisher.test(
+#     matrix(
+#       c(acute_n_sites, art_n_sites, total_acute_sites, total_pat_sites),
+#       ncol = 2))$p.value) %>%
+#   ungroup() %>%
+#   dplyr::mutate(adj_freq_test = p.adjust(freq_fisher_test, method = "BH"))
 ```
 
 # look at position of integration site on chromosome
