@@ -150,6 +150,25 @@ df_compiled %>%
   arrange(exp, desc(patient_sum), desc(location_sum)) %>%
   write.table("df_compiled_grouped_stats.csv", col.names = TRUE,
               row.names = FALSE, quote = FALSE, sep = "\t")
+
+# same as above but with clone information
+df_compiled %>%
+  mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
+  group_by(exp, patient_anon_v2, location, cell) %>%
+  summarise(total_abund = sum(abund),
+            total_clone = sum(clone)) %>%
+  arrange(desc(total_abund)) %>% 
+  ungroup() %>%
+  group_by(exp, patient_anon_v2, location) %>%
+  mutate(location_sum = sum(total_abund),
+         location_clone_sum = sum(total_clone)) %>%
+  ungroup() %>%
+  group_by(exp, patient_anon_v2) %>%
+  mutate(patient_sum = sum(total_abund),
+         patient_clones = sum(total_clone)) %>%
+  arrange(exp, desc(patient_sum), desc(location_sum)) %>%
+  write.table("df_compiled_grouped_stats_with_clones.csv", col.names = TRUE,
+              row.names = FALSE, quote = FALSE, sep = "\t")
 ```
 
 # experiment colors
