@@ -875,6 +875,9 @@ compare_enrichment <- function(all_stats, exp_a, exp_b) {
   total_a_sites <- length(unique(paste(a_df$patient_anon_v2, a_df$posID)))
   total_b_sites <- length(unique(paste(b_df$patient_anon_v2, b_df$posID)))
   
+  a_freq_lbl <- sym(glue("{tolower(exp_a)}_freq"))
+  b_freq_lbl <- sym(glue("{tolower(exp_b)}_freq"))
+  
   a_pts_lbl <- sym(glue("{tolower(exp_a)}_n_patients"))
   b_pts_lbl <- sym(glue("{tolower(exp_b)}_n_patients"))
   
@@ -884,15 +887,15 @@ compare_enrichment <- function(all_stats, exp_a, exp_b) {
   res <- all_stats %>%
     dplyr::filter(n_patients > 0) %>%
     ungroup() %>%
-    mutate(a_freq = !!a_sites_lbl / (gene_width * total_a_sites),
-           b_freq = !!b_sites_lbl / (gene_width * total_b_sites),
-           pct_chg = 100 * (b_freq - a_freq) / a_freq) %>%
+    mutate(!!a_freq_lbl := !!a_sites_lbl / (gene_width * total_a_sites),
+           !!b_freq_lbl := !!b_sites_lbl / (gene_width * total_b_sites),
+           pct_chg = 100 * (!!b_freq_lbl - !!a_freq_lbl) / !!a_freq_lbl) %>%
     dplyr::filter(!is.nan(pct_chg)) %>%
     dplyr::filter(!!a_sites_lbl >= 1 & !!b_sites_lbl >= 1) %>%
     dplyr::select(gene_name,
                   !!a_sites_lbl, !!b_sites_lbl,
                   !!a_pts_lbl, !!b_pts_lbl,
-                  a_freq, b_freq,
+                  !!a_freq_lbl, !!b_freq_lbl,
                   pct_chg) %>%
     arrange(pct_chg)
   
@@ -914,6 +917,35 @@ compare_enrichment(all_stats, "Chronic", "ART")
 #   ungroup() %>%
 #   dplyr::mutate(adj_freq_test = p.adjust(freq_fisher_test, method = "BH"))
 ```
+
+# fisher test for proportion of clones
+```{r}
+calc_sig_n_clones <- function(stage) {
+  exp_compiled <- df_compiled %>%
+    mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
+    dplyr::filter(exp == stage) %>%
+    group_by(patient_anon_v2, location) %>%
+    summarise(total_clones = sum(clone),
+              total_nonclones = sum(!clone)) %>%
+    ungroup() %>%
+    group_by(location) %>%
+    summarise(clones = sum(total_clones),
+              nonclones = sum(total_nonclones))
+
+  exp_mat <- t(as.matrix(exp_compiled[c(1:nrow(exp_compiled)), c(2:3)]))
+  colnames(exp_mat) <- as_vector(exp_compiled[, 1])
+  
+  print("---")
+  print(exp_mat)
+  return(chisq.test(exp_mat))
+}
+
+calc_sig_n_clones("ART")
+calc_sig_n_clones("Acute")
+calc_sig_n_clones("Chronic")
+```
+
+
 
 # look at position of integration site on chromosome
 ```{r}
