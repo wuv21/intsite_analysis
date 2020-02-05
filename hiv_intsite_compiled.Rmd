@@ -136,38 +136,50 @@ gr_compiled <- makeGRangesFromDataFrame(df_compiled,
 
 # generate giant supplemental table
 ```{r}
-count_total_abundance <- function(df) {
-  df %>%
-    mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
-    group_by(exp, patient_anon_v2, location, cell) %>%
-    summarise(total_abund = sum(abund),
-              total_clone = sum(clone))
-} 
-
-count_loc_abundance <- function(df) {
+count_abundance_by <- function(df, name, ...) {
+  grouping <- enquos(...)
+  
+  name_sum <- glue("{name}_sum")
+  name_clones <- glue("{name}_clones")
+  
   df %>%
     ungroup() %>%
-    group_by(exp, patient_anon_v2, location) %>%
-    mutate(location_sum = sum(total_abund),
-           location_clone_sum = sum(total_clone))
+    group_by(!!!grouping) %>%
+    mutate(!!name_sum := sum(total_abund),
+           !!name_clones := sum(total_clone))
 }
 
-count_ind_abundance <- function(df) {
-  df %>%
-    ungroup() %>%
-    group_by(exp, patient_anon_v2) %>%
-    mutate(patient_sum = sum(total_abund),
-           patient_clones = sum(total_clone))
-}
+cell_counts <- read.csv("data/sort_counts.csv", stringsAsFactors = FALSE) %>%
+  dplyr::rename(location = Compartment,
+                patient_anon_v2 = Indivdiual,
+                cell = Subset)
 
 df_compiled %>%
-  count_total_abundance() %>%
-  count_loc_abundance() %>%
-  count_ind_abundance() %>%
+  mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
+  group_by(exp, patient_anon_v2, location, cell) %>%
+  summarise(total_abund = sum(abund),
+            total_clone = sum(clone)) %>%
+  count_abundance_by("location", exp, patient_anon_v2, location) %>%
+  count_abundance_by("individual", exp, patient_anon_v2) %>%
   ungroup() %>%
   mutate(exp = factor(exp, levels = c("ART", "Acute", "Chronic"))) %>%
   arrange(exp) %>%
-  write.table("df_compiled_grouped_stats_with_clones.csv",
+  left_join(cell_counts, by = c("patient_anon_v2", "location", "cell")) %>%
+  dplyr::select(exp, patient_anon_v2, location, cell, Cells.Sorted, total_abund,
+               total_clone, location_sum, location_clones, individual_sum,
+               individual_clones) %>%
+  dplyr::rename(Stage = exp,
+                Individual = patient_anon_v2,
+                Compartment = location,
+                Subset = cell,
+                `Cells sorted` = Cells.Sorted,
+                `Subset Abundance` = total_abund,
+                `Subset # clones` = total_clone,
+                `Compartment Abundance` = location_sum,
+                `Compartment # clones` = location_clones,
+                `Individual Abundance` = individual_sum,
+                `Individual # clones` = individual_clones) %>%
+  write.table("Table_summary.csv",
               col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
 ```
 
