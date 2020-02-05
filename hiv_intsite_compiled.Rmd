@@ -935,9 +935,8 @@ calc_sig_n_clones <- function(stage) {
   exp_mat <- t(as.matrix(exp_compiled[c(1:nrow(exp_compiled)), c(2:3)]))
   colnames(exp_mat) <- as_vector(exp_compiled[, 1])
   
-  print("---")
   print(exp_mat)
-  return(chisq.test(exp_mat))
+  return(fisher.test(exp_mat))
 }
 
 calc_sig_n_clones("ART")
