@@ -478,8 +478,6 @@ cowplot::save_plot("figs/rel_abund_chronic.svg",
 
 ```{r}
 uniq_patients <- unique(df_compiled$patient_anon_v2)
-# uniq_cells <- unique(paste(df_compiled$location, df_compiled$cell, sep = "_"))
-# cell_colors <- brewer.pal(length(uniq_cells), "Paired")
 
 df_uniq_cells <- df_compiled %>%
   mutate(sample_cell = paste(location, cell, sep = " | ")) %>%
@@ -541,9 +539,6 @@ for (p in uniq_patients) {
                                      paste0(cell_colors[sample_cell], "60"),
                                      "#FFFFFFFF"),
            abund_color = ifelse(abund >= abund_threshold, "#000000", "#CCCCCC"))
-    
-  # png(paste("figs/chord_", p, "_new.png", sep = ""),
-  #     width = 1800, height = 1800, bg = "transparent")
   
   svglite(paste("figs/chord_", p, "_new.svg", sep = ""),
           bg = "transparent",
@@ -574,9 +569,6 @@ make_legend <- function(cell_colors, uniq_cells, fn) {
           legend.title = element_blank()) +
     guides(fill = guide_legend(override.aes = list(size = 10)))
   
-  # leg <- cowplot::get_legend(g)
-  # grid.newpage()
-  # grid.draw(leg)
   ggsave(fn, plot = g, device = "svg", width = 9)
 }
 
