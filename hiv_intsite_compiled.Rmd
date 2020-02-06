@@ -857,18 +857,17 @@ all_stats <- as.data.frame(gr_compiled[subjectHits(all_in_gene)], row.names = NU
             art_n_sites = n_distinct(posID[patient_anon_v2 %in% art_patients]),
             chronic_n_sites = n_distinct(posID[patient_anon_v2 %in% chronic_patients]))
 
+# acute_df <- df_compiled %>% filter(exp == "Acute")
+# art_df <- df_compiled %>% filter(exp == "ART")
+# chronic_df <- df_compiled %>% filter(exp == "Chronic")
+# 
+# total_acute_sites <- length(unique(paste(acute_df$patient_anon_v2, acute_df$posID)))
+# total_art_sites <- length(unique(paste(art_df$patient_anon_v2, art_df$posID)))
+# total_chronic_sites <- length(unique(paste(chronic_df$patient_anon_v2, chronic_df$posID)))
+# 
+# total_pat_sites <- length(unique(paste(df_compiled$patient, df_compiled$posID)))
 
-acute_df <- df_compiled %>% filter(exp == "Acute")
-art_df <- df_compiled %>% filter(exp == "ART")
-chronic_df <- df_compiled %>% filter(exp == "Chronic")
-
-total_acute_sites <- length(unique(paste(acute_df$patient_anon_v2, acute_df$posID)))
-total_art_sites <- length(unique(paste(art_df$patient_anon_v2, art_df$posID)))
-total_chronic_sites <- length(unique(paste(chronic_df$patient_anon_v2, art_df$posID)))
-
-total_pat_sites <- length(unique(paste(df_compiled$patient, df_compiled$posID)))
-
-compare_enrichment <- function(all_stats, exp_a, exp_b) {
+compare_enrichment <- function(all_stats, exp_a, exp_b, save=TRUE) {
   a_df <- df_compiled %>% filter(exp == exp_a)
   b_df <- df_compiled %>% filter(exp == exp_b)
   
@@ -899,23 +898,55 @@ compare_enrichment <- function(all_stats, exp_a, exp_b) {
                   pct_chg) %>%
     arrange(pct_chg)
   
+  total_a_sites <- sym(glue("total_{tolower(exp_a)}_sites"))
+  total_b_sites <- sym(glue("total_{tolower(exp_b)}_sites"))
+  
+  # if (sig_test) {
+  #   res <- res %>%
+  #     dplyr::mutate(id = seq_len(n())) %>%
+  #     dplyr::group_by(id) %>%
+  #     dplyr::mutate(freq_fisher_test = fisher.test(
+  #       matrix(
+  #         c(!!a_sites_lbl, !!b_sites_lbl, total_acute_sites, total_pat_sites),
+  #         ncol = 2))$p.value) %>%
+  #     ungroup() %>%
+  #     dplyr::mutate(adj_freq_test = p.adjust(freq_fisher_test, method = "BH")) %>%
+  #     dplyr::select(-id)
+  # }
+  
+  if (save) {
+    fn <- glue("geneEnrichment/geneEnrichment_{exp_a}vs{exp_b}.tsv")
+    
+    a_sites_name <- sym(glue("# {exp_a} sites"))
+    b_sites_name <- sym(glue("# {exp_b} sites"))
+    a_ind_name <- sym(glue("# {exp_a} individuals"))
+    b_ind_name <- sym(glue("# {exp_b} individuals"))
+    a_freq_name <- sym(glue("{exp_a} Frequency"))
+    b_freq_name <- sym(glue("{exp_b} Frequency"))
+    
+    res %>%
+      dplyr::mutate(pct_chg = round(pct_chg, digits = 2),
+                    !!a_freq_lbl := formatC(!!a_freq_lbl, format = "e", digits = 2),
+                    !!b_freq_lbl := formatC(!!b_freq_lbl, format = "e", digits = 2)) %>%
+      dplyr::rename(`Gene` = gene_name,
+                    !!a_sites_name := !!a_sites_lbl,
+                    !!b_sites_name := !!b_sites_lbl,
+                    !!a_ind_name := !!a_pts_lbl,
+                    !!b_ind_name := !!b_pts_lbl,
+                    !!a_freq_name := !!a_freq_lbl,
+                    !!b_freq_name := !!b_freq_lbl,
+                    `% Change` = pct_chg) %>%
+      write.table(file = fn,
+                  col.names = TRUE, row.names = FALSE,
+                  quote = FALSE, sep = "\t")
+  }
+
   return(res)
 }
-
-#TODO fix filtering...
 
 compare_enrichment(all_stats, "Acute", "ART")
 compare_enrichment(all_stats, "Acute", "Chronic")
 compare_enrichment(all_stats, "Chronic", "ART")
-
-#   dplyr::mutate(id = seq_len(n())) %>%
-#   dplyr::group_by(id) %>%
-#   dplyr::mutate(freq_fisher_test = fisher.test(
-#     matrix(
-#       c(acute_n_sites, art_n_sites, total_acute_sites, total_pat_sites),
-#       ncol = 2))$p.value) %>%
-#   ungroup() %>%
-#   dplyr::mutate(adj_freq_test = p.adjust(freq_fisher_test, method = "BH"))
 ```
 
 # fisher test for proportion of clones
