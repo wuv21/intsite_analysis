@@ -977,7 +977,7 @@ calc_sig_n_clones("Chronic")
 
 
 
-# look at position of integration site on chromosome
+# look at position of nearest neighbor integration site on chromosome
 ```{r}
 find_nn_dist <- function(start) {
   nn_dist <- sapply(seq_along(start), function(i) {
@@ -1009,9 +1009,6 @@ df_compiled %>%
   stat_ecdf(geom = "step") +
   facet_wrap(~ seqnames, scales = "free") +
   theme_classic()
-
-# TODO come up with graph...
-hg38 <- readRDS("reference_hg38.rds")
 ```
 
 # gene annotation
@@ -1036,5 +1033,30 @@ get_unique_ingene <- function(df, .filter_crit, .group_var, fn) {
 get_unique_ingene(df_compiled, exp == "Acute", location, "acute_by_loc.tsv")
 get_unique_ingene(df_compiled, exp == "Chronic", location, "chronic_by_loc.tsv")
 get_unique_ingene(df_compiled, exp == "ART", location, "art_by_loc.tsv")
+```
+
+# TODO begin work on dealing with rnaseq datasets...
+```{r}
+# cd4 trm from mus spleen - can mark 69+
+# https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE128197
+
+# tfh from human ln
+# https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE130793
+
+tfh_genes <- toString((df_compiled %>%
+  dplyr::filter(cell == "HLA-DR- GC-Tfh" | cell == "GC-Tfh") %>%
+  dplyr::filter(in_gene != "FALSE") %>%
+  dplyr::select(in_gene))$in_gene)
+
+tfh_genes <- gsub(" ", "", tfh_genes)
+tfh_genes <- unlist(str_split(tfh_genes, pattern = ","))
+
+gse21379 <- read.csv("~/Downloads/Gene Set- GSE21379_TFH_VS_NON_TFH_CD4_TCELL_UP.txt",
+                     skip = 2,
+                     header = FALSE)
+gse21379 <- as.character(gse21379$V1)
+
+
+base::intersect(tfh_genes, gse21379)
 ```
 
