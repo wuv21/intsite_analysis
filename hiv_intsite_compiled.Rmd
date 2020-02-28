@@ -1043,20 +1043,68 @@ get_unique_ingene(df_compiled, exp == "ART", location, "art_by_loc.tsv")
 # tfh from human ln
 # https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE130793
 
-tfh_genes <- toString((df_compiled %>%
-  dplyr::filter(cell == "HLA-DR- GC-Tfh" | cell == "GC-Tfh") %>%
-  dplyr::filter(in_gene != "FALSE") %>%
-  dplyr::select(in_gene))$in_gene)
+tfh_rnaseq <- read.table("rnaseq/GSE130793_LVRNAseq_CD4_gene_counts.txt", header = TRUE)
+tfh_rnaseq <- tfh_rnaseq %>%
+  dplyr::select(id, geneSymbol, A_1, B_1, C_1)
 
-tfh_genes <- gsub(" ", "", tfh_genes)
-tfh_genes <- unlist(str_split(tfh_genes, pattern = ","))
+library(DESeq2)
+tfh_rnaseq_matrix <- as.matrix(tfh_rnaseq[, c(3:ncol(tfh_rnaseq))])
+rownames(tfh_rnaseq_matrix) <- tfh_rnaseq$id
 
-gse21379 <- read.csv("~/Downloads/Gene Set- GSE21379_TFH_VS_NON_TFH_CD4_TCELL_UP.txt",
-                     skip = 2,
-                     header = FALSE)
-gse21379 <- as.character(gse21379$V1)
+tfh_col_data <- data.frame(name = colnames(tfh_rnaseq)[c(3:5)])
+rownames(tfh_col_data) <- tfh_col_data$name
 
+tfh_dds <- DESeqDataSetFromMatrix(countData = tfh_rnaseq_matrix,
+                                  colData = tfh_col_data,
+                                  design = ~ 1)
 
-base::intersect(tfh_genes, gse21379)
+tfh_dds <- DESeq(tfh_dds)
+tfh_counts <- as.data.frame(counts(tfh_dds, normalized = T))
+tfh_counts$id <- rownames(tfh_counts)
+
+tfh_counts <- tfh_counts %>%
+  rowwise() %>%
+  dplyr::mutate(avg_exp = mean(c(A_1, B_1, C_1), na.omit = TRUE)) %>%
+  left_join(tfh_rnaseq[, c("id", "geneSymbol")], by = "id", keep = FALSE) %>%
+  ungroup() %>%
+  mutate(bin = ntile(avg_exp, 10),
+         geneSymbol = as.character(geneSymbol))
+
+get_genes_by_cell <- function(df, .filter_crit) {
+  .filter_crit <- enquo(.filter_crit)
+  
+  genes <- toString((df %>%
+    dplyr::filter(in_gene != "FALSE") %>%
+    dplyr::filter(!!.filter_crit) %>%
+    dplyr::select(in_gene))$in_gene)
+
+  genes <- gsub(" ", "", genes)
+  genes <- unlist(str_split(genes, pattern = ","))
+  
+  overlapping <- data.frame(geneSymbol = genes,
+                            stringsAsFactors = FALSE)
+  
+  return(overlapping)
+}
+
+plot_tx_bins <- function(df, title) {
+  df %>%
+    left_join(tfh_counts[, c("id", "geneSymbol", "bin")], by = "geneSymbol") %>%
+    group_by(bin) %>%
+    summarise(freq = n() / nrow(.)) %>%
+    ggplot(aes(x = as.factor(bin), y = freq)) +
+    geom_bar(stat = "identity", fill = "#000000", width = 0.8) +
+    labs(title = title,
+         x = "Tfh gene expression bins (decreasing -> increasing)",
+         y = "Frequency") +
+    theme_classic() +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+
+plot_tx_bins(get_genes_by_cell(df_compiled, cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh"), "GC-Tfh")
+plot_tx_bins(get_genes_by_cell(df_compiled, cell == "CD69+" | cell == "HLA-DR- CD69+"), "CD69+")
+plot_tx_bins(get_genes_by_cell(df_compiled, cell == "CD69-" | cell == "HLA-DR- CD69-"), "CD69-")
+plot_tx_bins(get_genes_by_cell(df_compiled, cell == "Tcm" | cell == "CD69- Tcm"), "Tcm")
+plot_tx_bins(get_genes_by_cell(df_compiled, cell == "Tem" | cell == "CD69- Tem"), "Tem")
 ```
 
