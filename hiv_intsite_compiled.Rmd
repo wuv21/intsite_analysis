@@ -993,38 +993,81 @@ get_unique_ingene(df_compiled, exp == "ART", location, "art_by_loc.tsv")
 
 # TODO begin work on dealing with rnaseq datasets...
 ```{r}
-# cd4 trm from mus spleen - can mark 69+
-# https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE128197
-
 # tfh from human ln
 # https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE130793
-
-tfh_rnaseq <- read.table("rnaseq/GSE130793_LVRNAseq_CD4_gene_counts.txt", header = TRUE)
-tfh_rnaseq <- tfh_rnaseq %>%
-  dplyr::select(id, geneSymbol, A_1, B_1, C_1)
-
 library(DESeq2)
-tfh_rnaseq_matrix <- as.matrix(tfh_rnaseq[, c(3:ncol(tfh_rnaseq))])
-rownames(tfh_rnaseq_matrix) <- tfh_rnaseq$id
 
-tfh_col_data <- data.frame(name = colnames(tfh_rnaseq)[c(3:5)])
-rownames(tfh_col_data) <- tfh_col_data$name
+vella_rnaseq <- read.table("rnaseq/GSE130793_LVRNAseq_CD4_gene_counts.txt", header = TRUE)
+gc_vs_non <- vella_rnaseq %>%
+  dplyr::select(id, geneSymbol, A_1, B_1, C_1, A2, B2, C2)
 
-tfh_dds <- DESeqDataSetFromMatrix(countData = tfh_rnaseq_matrix,
-                                  colData = tfh_col_data,
-                                  design = ~ 1)
+gc_vs_non_matrix <- as.matrix(gc_vs_non[, c(3:ncol(gc_vs_non))])
+rownames(gc_vs_non_matrix) <- gc_vs_non$id
 
-tfh_dds <- DESeq(tfh_dds)
-tfh_counts <- as.data.frame(counts(tfh_dds, normalized = T))
-tfh_counts$id <- rownames(tfh_counts)
+col_data <- data.frame(name = colnames(gc_vs_non)[c(3:ncol(gc_vs_non))],
+                       cells = c(rep("GCTfh", 3), rep("nonTfh", 3))) %>%
+  mutate(cells = factor(cells, levels = c("nonTfh", "GCTfh")))
+rownames(col_data) <- col_data$name
 
-tfh_counts <- tfh_counts %>%
-  rowwise() %>%
-  dplyr::mutate(avg_exp = mean(c(A_1, B_1, C_1), na.omit = TRUE)) %>%
-  left_join(tfh_rnaseq[, c("id", "geneSymbol")], by = "id", keep = FALSE) %>%
-  ungroup() %>%
-  mutate(bin = ntile(avg_exp, 10),
-         geneSymbol = as.character(geneSymbol))
+dds <- DESeqDataSetFromMatrix(countData = gc_vs_non_matrix,
+                              colData = col_data,
+                              design = ~ cells)
+
+dds <- DESeq(dds)
+res <- results(dds, tidy = TRUE)
+
+up_tfh <- res %>%
+  dplyr::filter(!is.na(padj)) %>%
+  dplyr::filter(padj < 0.05) %>%
+  dplyr::filter(log2FoldChange > 0) %>%
+  dplyr::rename(id = row) %>%
+  left_join(gc_vs_non, by = "id", keep = FALSE)
+
+length(intersect(get_genes_by_cell(df_compiled, cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh")$geneSymbol,
+          up_tfh$geneSymbol))
+
+length(intersect(get_genes_by_cell(df_compiled, cell == "CD69+" | cell == "HLA-DR- CD69+")$geneSymbol,
+          up_tfh$geneSymbol))
+
+length(intersect(get_genes_by_cell(df_compiled, cell == "CD69-" | cell == "HLA-DR- CD69-")$geneSymbol,
+          up_tfh$geneSymbol))
+
+length(intersect(get_genes_by_cell(df_compiled, cell == "Tcm" | cell == "CD69- Tcm")$geneSymbol,
+          up_tfh$geneSymbol))
+
+length(intersect(get_genes_by_cell(df_compiled, cell == "Tem" | cell == "CD69- Tem")$geneSymbol,
+          up_tfh$geneSymbol))
+
+parse_vella_rnaseq <- function(raw_matrix, ...) {
+  col_ids <- enquos(...)
+  
+  rnaseq <- raw_matrix %>%
+    dplyr::select(id, geneSymbol, !!!col_ids)
+  
+  rnaseq_matrix <- as.matrix(rnaseq[, c(3:ncol(rnaseq))])
+  rownames(rnaseq_matrix) <- rnaseq$id
+  
+  col_data <- data.frame(name = colnames(rnaseq)[c(3:5)])
+  rownames(col_data) <- col_data$name
+  
+  dds <- DESeqDataSetFromMatrix(countData = rnaseq_matrix,
+                                colData = col_data,
+                                design = ~ 1)
+  
+  dds <- DESeq(dds)
+  dds_counts <- as.data.frame(counts(dds, normalized = T))
+  dds_counts$id <- rownames(dds_counts)
+  
+  counts <- dds_counts %>%
+    rowwise() %>%
+    dplyr::mutate(avg_exp = mean(c(!!!col_ids), na.omit = TRUE)) %>%
+    left_join(rnaseq[, c("id", "geneSymbol")], by = "id", keep = FALSE) %>%
+    ungroup() %>%
+    mutate(bin = ntile(avg_exp, 10),
+           geneSymbol = as.character(geneSymbol))
+  
+  return(counts)
+}
 
 get_genes_by_cell <- function(df, .filter_crit) {
   .filter_crit <- enquo(.filter_crit)
@@ -1043,9 +1086,9 @@ get_genes_by_cell <- function(df, .filter_crit) {
   return(overlapping)
 }
 
-plot_tx_bins <- function(df, title) {
+plot_tx_bins <- function(df, bins, title) {
   df %>%
-    left_join(tfh_counts[, c("id", "geneSymbol", "bin")], by = "geneSymbol") %>%
+    left_join(bins[, c("id", "geneSymbol", "bin")], by = "geneSymbol") %>%
     group_by(bin) %>%
     summarise(freq = n() / nrow(.)) %>%
     ggplot(aes(x = as.factor(bin), y = freq)) +
@@ -1057,10 +1100,19 @@ plot_tx_bins <- function(df, title) {
     theme(plot.title = element_text(hjust = 0.5))
 }
 
-plot_tx_bins(get_genes_by_cell(df_compiled, cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh"), "GC-Tfh")
-plot_tx_bins(get_genes_by_cell(df_compiled, cell == "CD69+" | cell == "HLA-DR- CD69+"), "CD69+")
-plot_tx_bins(get_genes_by_cell(df_compiled, cell == "CD69-" | cell == "HLA-DR- CD69-"), "CD69-")
-plot_tx_bins(get_genes_by_cell(df_compiled, cell == "Tcm" | cell == "CD69- Tcm"), "Tcm")
-plot_tx_bins(get_genes_by_cell(df_compiled, cell == "Tem" | cell == "CD69- Tem"), "Tem")
+tfh_bins <- parse_vella_rnaseq(vella_rnaseq, A_1, B_1, C_1)
+nontfh_bins <- parse_vella_rnaseq(vella_rnaseq, A2, B2, C2)
+
+filter_crit <- quos(c(cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh",
+                 cell == "CD69+" | cell == "HLA-DR- CD69+",
+                 cell == "CD69-" | cell == "HLA-DR- CD69-",
+                 cell == "Tcm" | cell == "CD69- Tcm",
+                 cell == "Tem" | cell == "CD69- Tem"))
+
+titles <- c("GC-Tfh",
+            "CD69+",
+            "CD69-",
+            "Tcm",
+            "Tem")
 ```
 
