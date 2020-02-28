@@ -696,24 +696,6 @@ df_pre_mrc %>%
 df_pre_mrc %>%
   mutate(sampleName = paste(exp, location, clonal, sep = "_")) %>%
   make_heatmaps(annot_ref, "exp_location_clonal", c("Stage", "Compartment", "Clonal"))
-
-# art_only and location and cell
-# df_pre_mrc %>%
-#   filter(exp == "ART") %>%
-#   mutate(sampleName = paste(location, cell, sep = "_")) %>%
-#   make_heatmaps(annot_ref, "ARTonly_location_cell")
-
-# acute_only and location and cell
-# df_pre_mrc %>%
-#   filter(exp == "Acute") %>%
-#   mutate(sampleName = paste(location, cell, sep = "_")) %>%
-#   make_heatmaps(annot_ref, "Acuteonly_location_cell")
-
-# acute_only and location and cell
-# df_pre_mrc %>%
-#   filter(exp == "Chronic") %>%
-#   mutate(sampleName = paste(location, cell, sep = "_")) %>%
-#   make_heatmaps(annot_ref, "Chroniconly_location_cell")
 ```
 
 # overall stat counts
@@ -779,19 +761,6 @@ df_anno <- data.frame(gr_anno) %>%
   ungroup() %>%
   mutate(exp = factor(exp, levels = c("Acute", "Chronic", "ART")),
          location = factor(location, levels = c("PBMC", "CLN", "ILN", "Tonsil")))
-
-
-# chi square test to test cell subset influence on the genomic site proportions
-# df_anno %>%
-#   ungroup() %>%
-#   dplyr::filter(exp == "ART-treated", location == "Tonsil") %>%
-#   dplyr::select(cell, feature, sum_feature) %>%
-#   pivot_wider(names_from = feature,
-#               values_from = sum_feature) %>%
-#   dplyr::filter(!cell == "Naive") %>%
-#   dplyr::select(-cell) %>%
-#   chisq.test(., simulate.p.value = TRUE)
-
 
 facet_label_clean <- function(labels) {
   labels <- lapply(labels, as.character)
@@ -900,19 +869,6 @@ compare_enrichment <- function(all_stats, exp_a, exp_b, save=TRUE) {
   
   total_a_sites <- sym(glue("total_{tolower(exp_a)}_sites"))
   total_b_sites <- sym(glue("total_{tolower(exp_b)}_sites"))
-  
-  # if (sig_test) {
-  #   res <- res %>%
-  #     dplyr::mutate(id = seq_len(n())) %>%
-  #     dplyr::group_by(id) %>%
-  #     dplyr::mutate(freq_fisher_test = fisher.test(
-  #       matrix(
-  #         c(!!a_sites_lbl, !!b_sites_lbl, total_acute_sites, total_pat_sites),
-  #         ncol = 2))$p.value) %>%
-  #     ungroup() %>%
-  #     dplyr::mutate(adj_freq_test = p.adjust(freq_fisher_test, method = "BH")) %>%
-  #     dplyr::select(-id)
-  # }
   
   if (save) {
     fn <- glue("geneEnrichment/geneEnrichment_{exp_a}vs{exp_b}.tsv")
