@@ -998,45 +998,45 @@ get_unique_ingene(df_compiled, exp == "ART", location, "art_by_loc.tsv")
 library(DESeq2)
 
 vella_rnaseq <- read.table("rnaseq/GSE130793_LVRNAseq_CD4_gene_counts.txt", header = TRUE)
-gc_vs_non <- vella_rnaseq %>%
-  dplyr::select(id, geneSymbol, A_1, B_1, C_1, A2, B2, C2)
-
-gc_vs_non_matrix <- as.matrix(gc_vs_non[, c(3:ncol(gc_vs_non))])
-rownames(gc_vs_non_matrix) <- gc_vs_non$id
-
-col_data <- data.frame(name = colnames(gc_vs_non)[c(3:ncol(gc_vs_non))],
-                       cells = c(rep("GCTfh", 3), rep("nonTfh", 3))) %>%
-  mutate(cells = factor(cells, levels = c("nonTfh", "GCTfh")))
-rownames(col_data) <- col_data$name
-
-dds <- DESeqDataSetFromMatrix(countData = gc_vs_non_matrix,
-                              colData = col_data,
-                              design = ~ cells)
-
-dds <- DESeq(dds)
-res <- results(dds, tidy = TRUE)
-
-up_tfh <- res %>%
-  dplyr::filter(!is.na(padj)) %>%
-  dplyr::filter(padj < 0.05) %>%
-  dplyr::filter(log2FoldChange > 0) %>%
-  dplyr::rename(id = row) %>%
-  left_join(gc_vs_non, by = "id", keep = FALSE)
-
-length(intersect(get_genes_by_cell(df_compiled, cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh")$geneSymbol,
-          up_tfh$geneSymbol))
-
-length(intersect(get_genes_by_cell(df_compiled, cell == "CD69+" | cell == "HLA-DR- CD69+")$geneSymbol,
-          up_tfh$geneSymbol))
-
-length(intersect(get_genes_by_cell(df_compiled, cell == "CD69-" | cell == "HLA-DR- CD69-")$geneSymbol,
-          up_tfh$geneSymbol))
-
-length(intersect(get_genes_by_cell(df_compiled, cell == "Tcm" | cell == "CD69- Tcm")$geneSymbol,
-          up_tfh$geneSymbol))
-
-length(intersect(get_genes_by_cell(df_compiled, cell == "Tem" | cell == "CD69- Tem")$geneSymbol,
-          up_tfh$geneSymbol))
+# gc_vs_non <- vella_rnaseq %>%
+#   dplyr::select(id, geneSymbol, A_1, B_1, C_1, A2, B2, C2)
+# 
+# gc_vs_non_matrix <- as.matrix(gc_vs_non[, c(3:ncol(gc_vs_non))])
+# rownames(gc_vs_non_matrix) <- gc_vs_non$id
+# 
+# col_data <- data.frame(name = colnames(gc_vs_non)[c(3:ncol(gc_vs_non))],
+#                        cells = c(rep("GCTfh", 3), rep("nonTfh", 3))) %>%
+#   mutate(cells = factor(cells, levels = c("nonTfh", "GCTfh")))
+# rownames(col_data) <- col_data$name
+# 
+# dds <- DESeqDataSetFromMatrix(countData = gc_vs_non_matrix,
+#                               colData = col_data,
+#                               design = ~ cells)
+# 
+# dds <- DESeq(dds)
+# res <- results(dds, tidy = TRUE)
+# 
+# up_tfh <- res %>%
+#   dplyr::filter(!is.na(padj)) %>%
+#   dplyr::filter(padj < 0.05) %>%
+#   dplyr::filter(log2FoldChange > 0) %>%
+#   dplyr::rename(id = row) %>%
+#   left_join(gc_vs_non, by = "id", keep = FALSE)
+# 
+# length(intersect(get_genes_by_cell(df_compiled, cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh")$geneSymbol,
+#           up_tfh$geneSymbol))
+# 
+# length(intersect(get_genes_by_cell(df_compiled, cell == "CD69+" | cell == "HLA-DR- CD69+")$geneSymbol,
+#           up_tfh$geneSymbol))
+# 
+# length(intersect(get_genes_by_cell(df_compiled, cell == "CD69-" | cell == "HLA-DR- CD69-")$geneSymbol,
+#           up_tfh$geneSymbol))
+# 
+# length(intersect(get_genes_by_cell(df_compiled, cell == "Tcm" | cell == "CD69- Tcm")$geneSymbol,
+#           up_tfh$geneSymbol))
+# 
+# length(intersect(get_genes_by_cell(df_compiled, cell == "Tem" | cell == "CD69- Tem")$geneSymbol,
+#           up_tfh$geneSymbol))
 
 parse_vella_rnaseq <- function(raw_matrix, ...) {
   col_ids <- enquos(...)
@@ -1070,20 +1070,20 @@ parse_vella_rnaseq <- function(raw_matrix, ...) {
 }
 
 get_genes_by_cell <- function(df, .filter_crit) {
-  .filter_crit <- enquo(.filter_crit)
+  # .filter_crit <- enquo(.filter_crit)
   
   genes <- toString((df %>%
     dplyr::filter(in_gene != "FALSE") %>%
-    dplyr::filter(!!.filter_crit) %>%
+    dplyr::filter_(.filter_crit) %>%
     dplyr::select(in_gene))$in_gene)
 
   genes <- gsub(" ", "", genes)
   genes <- unlist(str_split(genes, pattern = ","))
   
-  overlapping <- data.frame(geneSymbol = genes,
-                            stringsAsFactors = FALSE)
+  genes_df <- data.frame(geneSymbol = genes,
+                         stringsAsFactors = FALSE)
   
-  return(overlapping)
+  return(genes_df)
 }
 
 plot_tx_bins <- function(df, bins, title) {
@@ -1093,26 +1093,55 @@ plot_tx_bins <- function(df, bins, title) {
     summarise(freq = n() / nrow(.)) %>%
     ggplot(aes(x = as.factor(bin), y = freq)) +
     geom_bar(stat = "identity", fill = "#000000", width = 0.8) +
-    labs(title = title,
-         x = "Tfh gene expression bins (decreasing -> increasing)",
-         y = "Frequency") +
+    labs(title = title) +
     theme_classic() +
-    theme(plot.title = element_text(hjust = 0.5))
+    theme(plot.title = element_text(hjust = 0.5, size = 9),
+          axis.title = element_blank())
 }
 
 tfh_bins <- parse_vella_rnaseq(vella_rnaseq, A_1, B_1, C_1)
 nontfh_bins <- parse_vella_rnaseq(vella_rnaseq, A2, B2, C2)
 
-filter_crit <- quos(c(cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh",
-                 cell == "CD69+" | cell == "HLA-DR- CD69+",
-                 cell == "CD69-" | cell == "HLA-DR- CD69-",
-                 cell == "Tcm" | cell == "CD69- Tcm",
-                 cell == "Tem" | cell == "CD69- Tem"))
+tx_wrapper <- function(df, .crit, bins, title) {
+  # .crit <- enquo(.crit)
+  
+  genes_df <- get_genes_by_cell(df, .crit)
+  
+  return(plot_tx_bins(genes_df, bins, title))
+}
 
-titles <- c("GC-Tfh",
-            "CD69+",
-            "CD69-",
-            "Tcm",
-            "Tem")
+
+tx_wrapper(df_compiled, 'cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh"', tfh_bins, "GC-Tfh")
+
+filter_crit <- c('cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh"',
+                 'cell == "CD69+" | cell == "HLA-DR- CD69+"',
+                 'cell == "CD69-" | cell == "HLA-DR- CD69-"',
+                 'cell == "Tcm" | cell == "CD69- Tcm"',
+                 'cell == "Tem" | cell == "CD69- Tem"')
+
+titles <- c("HLA-DR- GC-Tfh | GC-Tfh",
+            "HLA-DR- CD69+ | CD69+",
+            "HLA-DR- CD69- | CD69-",
+            "CD69- Tcm | Tcm",
+            "CD69- Tem | Tem")
+
+tfh_tx_plots <- lapply(seq_along(filter_crit), function(i) {
+  plot <- tx_wrapper(df_compiled, filter_crit[1], tfh_bins, titles[i])
+  return(plot)
+})
+
+nontfh_tx_plots <- lapply(seq_along(filter_crit), function(i) {
+  plot <- tx_wrapper(df_compiled, filter_crit[1], nontfh_bins, titles[i])
+  return(plot)
+})
+
+tfh <- ggarrange(plots = tfh_tx_plots, ncol = 3)
+nontfh <- ggarrange(plots = nontfh_tx_plots, ncol = 3)
+
+ggsave("figs/tx_comp_tfh.svg", plot = tfh,
+       device = "svg", units = "in", width = 7, height = 3)
+
+ggsave("figs/tx_comp_nontfh.svg", plot = nontfh,
+       device = "svg", units = "in", width = 7, height = 3)
 ```
 
