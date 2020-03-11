@@ -381,8 +381,8 @@ for (u in uniq_exp) {
     heatmap_theme +
     coord_equal()
   
-  p1_x <- ggplot_build(g)$layout$panel_params[[1]]$x.labels
-  p1_y <- ggplot_build(g)$layout$panel_params[[1]]$y.labels
+  p1_x <- ggplot_build(g)$layout$panel_params[[1]]$x$get_labels()
+  p1_y <- ggplot_build(g)$layout$panel_params[[1]]$y$get_labels()
   
   panel_scale <- 1
   p <- egg::set_panel_size(g, height=unit(length(p1_y) / panel_scale, "cm"),
@@ -392,6 +392,8 @@ for (u in uniq_exp) {
   p2 <- make_xaxis_plot(p1_x, c("Patient", "Compartment", "Cell"), xaxis_colors, sep = "\n")
   
   p_comb <- cowplot::plot_grid(p, p2, ncol = 1, align = "v")
+  
+  print(p2)
   
   ggsave(glue("figs/overlap_hotspot_{u}.svg"), plot = p_comb,
        device = "svg", width = 30, height = 40, units = "cm")
@@ -998,45 +1000,6 @@ get_unique_ingene(df_compiled, exp == "ART", location, "art_by_loc.tsv")
 library(DESeq2)
 
 vella_rnaseq <- read.table("rnaseq/GSE130793_LVRNAseq_CD4_gene_counts.txt", header = TRUE)
-# gc_vs_non <- vella_rnaseq %>%
-#   dplyr::select(id, geneSymbol, A_1, B_1, C_1, A2, B2, C2)
-# 
-# gc_vs_non_matrix <- as.matrix(gc_vs_non[, c(3:ncol(gc_vs_non))])
-# rownames(gc_vs_non_matrix) <- gc_vs_non$id
-# 
-# col_data <- data.frame(name = colnames(gc_vs_non)[c(3:ncol(gc_vs_non))],
-#                        cells = c(rep("GCTfh", 3), rep("nonTfh", 3))) %>%
-#   mutate(cells = factor(cells, levels = c("nonTfh", "GCTfh")))
-# rownames(col_data) <- col_data$name
-# 
-# dds <- DESeqDataSetFromMatrix(countData = gc_vs_non_matrix,
-#                               colData = col_data,
-#                               design = ~ cells)
-# 
-# dds <- DESeq(dds)
-# res <- results(dds, tidy = TRUE)
-# 
-# up_tfh <- res %>%
-#   dplyr::filter(!is.na(padj)) %>%
-#   dplyr::filter(padj < 0.05) %>%
-#   dplyr::filter(log2FoldChange > 0) %>%
-#   dplyr::rename(id = row) %>%
-#   left_join(gc_vs_non, by = "id", keep = FALSE)
-# 
-# length(intersect(get_genes_by_cell(df_compiled, cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh")$geneSymbol,
-#           up_tfh$geneSymbol))
-# 
-# length(intersect(get_genes_by_cell(df_compiled, cell == "CD69+" | cell == "HLA-DR- CD69+")$geneSymbol,
-#           up_tfh$geneSymbol))
-# 
-# length(intersect(get_genes_by_cell(df_compiled, cell == "CD69-" | cell == "HLA-DR- CD69-")$geneSymbol,
-#           up_tfh$geneSymbol))
-# 
-# length(intersect(get_genes_by_cell(df_compiled, cell == "Tcm" | cell == "CD69- Tcm")$geneSymbol,
-#           up_tfh$geneSymbol))
-# 
-# length(intersect(get_genes_by_cell(df_compiled, cell == "Tem" | cell == "CD69- Tem")$geneSymbol,
-#           up_tfh$geneSymbol))
 
 parse_vella_rnaseq <- function(raw_matrix, ...) {
   col_ids <- enquos(...)
