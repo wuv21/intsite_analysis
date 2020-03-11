@@ -114,8 +114,8 @@ heatmap_to_ggplot2 <- function(heatmap_rds, heatmap_type, metric_order, output_s
     g2 <- ggplot(df2, aes(x = sampleName, y = y)) +
       graph_settings
     
-    p1_x <- ggplot_build(g1)$layout$panel_params[[1]]$x.labels
-    p2_x <- ggplot_build(g2)$layout$panel_params[[1]]$x.labels
+    p1_x <- ggplot_build(g1)$layout$panel_params[[1]]$x$get_labels()
+    p2_x <- ggplot_build(g2)$layout$panel_params[[1]]$x$get_labels()
     
     s_height_1 <- unit(length(unique(df1$y)), "cm")
     s_width_1 <- unit(length(unique(df1$sampleName)), "cm")
