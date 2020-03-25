@@ -41,6 +41,12 @@ source("scripts/hiv_int_helper_fx.R")
 source("scripts/ggplot2_extensions.R")
 ```
 
+# default settings
+```{r}
+fig_rds_prefix <- "rds_figs"
+```
+
+
 # load and merge data files
 ```{r}
 df_compiled <- readRDS("data/df_compiled.rds")
@@ -130,6 +136,10 @@ df_compiled <- df_compiled %>%
     TRUE ~ "Error"
   ))
 
+# change order of infection stage
+df_compiled <- df_compiled %>%
+  mutate(exp = factor(exp, levels = c("Acute", "Chronic", "ART")))
+
 gr_compiled <- makeGRangesFromDataFrame(df_compiled,
                                         keep.extra.columns = TRUE)
 ```
@@ -181,6 +191,29 @@ df_compiled %>%
                 `Individual # clones` = individual_clones) %>%
   write.table("Table_summary.csv",
               col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
+
+
+df_clones <- df_compiled %>%
+  mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
+  group_by(exp, patient_anon_v2, location, cell) %>%
+  summarise(total_unique_sites = n(),
+            total_abund = sum(abund),
+            total_clone = sum(clone)) %>%
+  ungroup()
+
+# save clone table
+df_clones %>%
+  group_by(exp, cell) %>%
+  summarize(all_uniq_sites = sum(total_unique_sites),
+            all_total_clone = sum(total_clone)) %>%
+  dplyr::mutate(percent = format(round(all_total_clone / all_uniq_sites * 100, 2), nsmall = 2)) %>%
+  dplyr::rename(Stage = exp,
+                Subset = cell,
+                `Total unique sites` = all_uniq_sites,
+                `Clonal sites` = all_total_clone,
+                `% clonal` = percent) %>%
+  write.table("clone_ratio.tsv", col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
+  
 ```
 
 # experiment colors
@@ -385,15 +418,17 @@ for (u in uniq_exp) {
   p1_y <- ggplot_build(g)$layout$panel_params[[1]]$y$get_labels()
   
   panel_scale <- 1
-  p <- egg::set_panel_size(g, height=unit(length(p1_y) / panel_scale, "cm"),
-                          width=unit(length(unique(p1_x)) / panel_scale, "cm"))
+  p <- egg::set_panel_size(g, height = unit(length(p1_y) / panel_scale, "cm"),
+                          width = unit(length(unique(p1_x)) / panel_scale, "cm"))
   
   
   p2 <- make_xaxis_plot(p1_x, c("Patient", "Compartment", "Cell"), xaxis_colors, sep = "\n")
   
   p_comb <- cowplot::plot_grid(p, p2, ncol = 1, align = "v")
   
-  print(p2)
+  saveRDS(p_comb, glue("{fig_rds_prefix}/overlap_hotspot_{u}.rds"))
+  saveRDS(p, glue("{fig_rds_prefix}/overlap_hotspot_{u}_p1.rds"))
+  saveRDS(p2, glue("{fig_rds_prefix}/overlap_hotspot_{u}_p2.rds"))
   
   ggsave(glue("figs/overlap_hotspot_{u}.svg"), plot = p_comb,
        device = "svg", width = 30, height = 40, units = "cm")
@@ -456,8 +491,8 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
          y = paste0("Relative sonic abundance \n",
          "(Low Abundance < ", abund_filter, " sonic abund)"))
   
-  scaled_g <- egg::set_panel_size(g, height=unit(3, "cm"),
-                          width=unit(length(unique(df_rel$x_axis)) + 3.5, "cm"))
+  scaled_g <- egg::set_panel_size(g, height = unit(3, "cm"),
+                          width = unit(length(unique(df_rel$x_axis)) + 3.5, "cm"))
   
   return(scaled_g)
 }
@@ -466,25 +501,47 @@ uniq_patients <- unique(df_compiled$patient_anon_v2)
 clonal_graphs <- list()
 for (p in uniq_patients) {
   if (startsWith(p, "T")) {
-    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Acute")
+    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "ART")
   } else if (startsWith(p, "C")) {
     clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Chronic")
   } else {
-    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "ART")
+    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Acute")
   }
 }
 
-art_rel_abund <- cowplot::plot_grid(clonal_graphs[["T1"]], clonal_graphs[["T2"]], clonal_graphs[["T3"]], ncol = 1, align = "h")
-cowplot::save_plot("figs/rel_abund_art.svg", art_rel_abund, base_width = NULL, base_height = 25, device = "svg")
+save_rel_abund_graphs <- function(prefix, stage) {
+  g_rel_abund <- cowplot::plot_grid(clonal_graphs[[glue("{prefix}1")]],
+                                    clonal_graphs[[glue("{prefix}2")]],
+                                    clonal_graphs[[glue("{prefix}3")]],
+                                    ncol = 1, align = "h")
+  
+  cowplot::save_plot(glue("figs/rel_abund_{stage}.svg"),
+                     g_rel_abund,
+                     base_width = NULL, base_height = 25, device = "svg")
+  
+  return("saved graph")
+}
 
-acute_rel_abund <- cowplot::plot_grid(clonal_graphs[["A1"]], clonal_graphs[["A2"]], clonal_graphs[["A3"]], ncol = 1, align = "h")
-cowplot::save_plot("figs/rel_abund_acute.svg",
-                   acute_rel_abund, base_width = NULL, base_height = 25, device = "svg")
+save_rel_abund_graphs("T", "art")
+save_rel_abund_graphs("A", "acute")
+save_rel_abund_graphs("C", "chronic")
 
-chronic_rel_abund <- cowplot::plot_grid(clonal_graphs[["C1"]], clonal_graphs[["C2"]], clonal_graphs[["C3"]], ncol = 1, align = "h")
-cowplot::save_plot("figs/rel_abund_chronic.svg",
-                   chronic_rel_abund, base_width = NULL,
-                   base_height = 25, device = "svg")
+# art_rel_abund <- cowplot::plot_grid(clonal_graphs[["T1"]], clonal_graphs[["T2"]], clonal_graphs[["T3"]], ncol = 1, align = "h")
+# cowplot::save_plot("figs/rel_abund_art.svg", art_rel_abund, base_width = NULL, base_height = 25, device = "svg")
+# 
+# acute_rel_abund <- cowplot::plot_grid(clonal_graphs[["A1"]], clonal_graphs[["A2"]], clonal_graphs[["A3"]], ncol = 1, align = "h")
+# cowplot::save_plot("figs/rel_abund_acute.svg",
+#                    acute_rel_abund, base_width = NULL, base_height = 25, device = "svg")
+# 
+# chronic_rel_abund <- cowplot::plot_grid(clonal_graphs[["C1"]], clonal_graphs[["C2"]], clonal_graphs[["C3"]], ncol = 1, align = "h")
+# cowplot::save_plot("figs/rel_abund_chronic.svg",
+#                    chronic_rel_abund, base_width = NULL,
+#                    base_height = 25, device = "svg")
+
+
+saveRDS(art_rel_abund, glue("{fig_rds_prefix}/art_rel_abund.rds"))
+saveRDS(acute_rel_abund, glue("{fig_rds_prefix}/acute_rel_abund.rds"))
+saveRDS(chronic_rel_abund, glue("{fig_rds_prefix}/chronic_rel_abund.rds"))
 ```
 
 # circos plot
@@ -771,7 +828,7 @@ facet_label_clean <- function(labels) {
   return(list(a))
 }
 
-ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = feature)) +
+site_annot_graph <- ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = feature)) +
   geom_col(position = position_dodge2(preserve = "single")) +
   labs(fill = "Feature",
        y = "% sonic abundance",
@@ -787,7 +844,8 @@ ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = feature)) +
              scales = "free_x",
              labeller = facet_label_clean)
 
-ggsave(filename = "figs/site_annot_subset.svg", device = "svg", width = 9, height = 6)
+saveRDS(site_annot_graph, glue("{fig_rds_prefix}/site_annot_graph.rds"))
+ggsave(filename = "figs/site_annot_subset.svg", plot = site_annot_graph, device = "svg", width = 9, height = 6)
 ```
 
 # in_gene comparison
@@ -932,7 +990,6 @@ calc_sig_n_clones("ART")
 calc_sig_n_clones("Acute")
 calc_sig_n_clones("Chronic")
 ```
-
 
 
 # look at position of nearest neighbor integration site on chromosome
