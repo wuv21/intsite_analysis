@@ -199,13 +199,93 @@ df_clones <- df_compiled %>%
   summarise(total_unique_sites = n(),
             total_abund = sum(abund),
             total_clone = sum(clone)) %>%
-  ungroup()
+  ungroup() %>%
+  group_by(exp, cell) %>%
+  summarize(all_uniq_sites = sum(total_unique_sites),
+            all_total_clone = sum(total_clone))
+
+resident_clones <- df_compiled %>%
+  mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
+  group_by(exp, patient_anon_v2, location, cell) %>%
+  summarise(total_unique_sites = n(),
+            total_abund = sum(abund),
+            total_clone = sum(clone)) %>%
+  mutate(resident = grepl("(GC-Tfh|CD69\\+)", cell)) %>%
+  mutate(resident_detailed = ifelse(resident,
+                           "Resident\n(CD69+ or GC-Tfh phenotypes)",
+                           "Non-resident")) %>%
+  ungroup() %>%
+  group_by(exp, patient_anon_v2, location, resident_detailed) %>%
+  summarise(all_uniq_sites = sum(total_unique_sites),
+            all_total_clone = sum(total_clone)) %>%
+  ungroup() %>%
+  dplyr::mutate(percent = all_total_clone / all_uniq_sites * 100,
+                exp_resident = paste(exp, resident_detailed, sep = "_"))
+
+resident_graph <- ggplot(resident_clones, aes(x = exp, y = percent, group = resident_detailed)) +
+  geom_bar(aes(fill = resident_detailed),
+           width = 0.8, position = position_dodge(width = 0.85), stat = "summary") +
+  geom_point(aes(shape = location),
+             size = 2,
+             position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.85)) +
+  labs(x = "Infection stage",
+       y = "% clonal of total unique sites",
+       fill = "Cell types",
+       shape = "Compartment") +
+  scale_fill_manual(values = c("red", "blue")) +
+  theme_classic()
+
+ggsave("figs/resident_clonal_expansion.svg", plot = resident_graph,
+       device = "svg", width = 6, height = 3)
+
+resident_aov <- aov(percent ~ resident_detailed * exp, data = resident_clones)
+summary(resident_aov)
+TukeyHSD(resident_aov, which = "exp")
+
+
+exp_combos <- combn(levels(resident_clones$exp), 2)
+exp_p_vals <- apply(exp_combos, MARGIN = 2, function(x) {
+  df <- resident_clones %>%
+    dplyr::filter(exp %in% x)
+  
+  print(x)
+  wc <- wilcox.test(percent ~ exp, data = df)
+  print(wc$p.value)
+  
+  return(wc)
+})
+
+exps <- levels(resident_clones$exp)
+residence_p_vals <- sapply(exps, function(x) {
+  df <- resident_clones %>%
+    dplyr::filter(exp == x)
+  
+  print(x)
+  wc <- wilcox.test(percent ~ resident_detailed, data = df)
+  print(wc$p.value)
+  
+  return(wc)
+})
+
+other_combos <- combn(unique(resident_clones$exp_resident), 2)
+other_p_vals <- apply(other_combos, MARGIN = 2, function(x) {
+  df <- resident_clones %>%
+    dplyr::filter(exp_resident %in% x)
+  
+  wc <- wilcox.test(percent ~ exp_resident, data = df)
+  
+  return(wc$p.value)
+})
+
+View(data.frame(t(other_combos)) %>%
+  mutate(p_val = other_p_vals,
+         sig = case_when(p_val < 0.001 ~ "***",
+                         p_val < 0.01 ~ "**",
+                         p_val < 0.05 ~ "*",
+                         TRUE ~ "ns")))
 
 # save clone table
 df_clones %>%
-  group_by(exp, cell) %>%
-  summarize(all_uniq_sites = sum(total_unique_sites),
-            all_total_clone = sum(total_clone)) %>%
   dplyr::mutate(percent = format(round(all_total_clone / all_uniq_sites * 100, 2), nsmall = 2)) %>%
   dplyr::rename(Stage = exp,
                 Subset = cell,
@@ -1050,7 +1130,7 @@ get_unique_ingene(df_compiled, exp == "Chronic", location, "chronic_by_loc.tsv")
 get_unique_ingene(df_compiled, exp == "ART", location, "art_by_loc.tsv")
 ```
 
-# TODO begin work on dealing with rnaseq datasets...
+# rnaseq_comparison
 ```{r}
 # tfh from human ln
 # https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE130793
@@ -1107,12 +1187,17 @@ get_genes_by_cell <- function(df, .filter_crit) {
 }
 
 plot_tx_bins <- function(df, bins, title) {
-  df %>%
+  df_graph <- df %>%
     left_join(bins[, c("id", "geneSymbol", "bin")], by = "geneSymbol") %>%
-    group_by(bin) %>%
+    mutate(bin = ifelse(is.na(bin), "NA", bin),
+           bin = factor(as.character(bin), levels = c("NA", as.character(1:10)))) %>%
+    group_by(bin) 
+  
+  df_graph %>%
     summarise(freq = n() / nrow(.)) %>%
-    ggplot(aes(x = as.factor(bin), y = freq)) +
+    ggplot(aes(x = bin, y = freq)) +
     geom_bar(stat = "identity", fill = "#000000", width = 0.8) +
+    scale_x_discrete(drop = FALSE) +
     labs(title = title) +
     theme_classic() +
     theme(plot.title = element_text(hjust = 0.5, size = 9),
@@ -1146,12 +1231,12 @@ titles <- c("HLA-DR- GC-Tfh | GC-Tfh",
             "CD69- Tem | Tem")
 
 tfh_tx_plots <- lapply(seq_along(filter_crit), function(i) {
-  plot <- tx_wrapper(df_compiled, filter_crit[1], tfh_bins, titles[i])
+  plot <- tx_wrapper(df_compiled, filter_crit[i], tfh_bins, titles[i])
   return(plot)
 })
 
 nontfh_tx_plots <- lapply(seq_along(filter_crit), function(i) {
-  plot <- tx_wrapper(df_compiled, filter_crit[1], nontfh_bins, titles[i])
+  plot <- tx_wrapper(df_compiled, filter_crit[i], nontfh_bins, titles[i])
   return(plot)
 })
 
