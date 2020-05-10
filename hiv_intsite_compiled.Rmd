@@ -189,7 +189,7 @@ df_compiled %>%
                 `Compartment # clones` = location_clones,
                 `Individual Abundance` = individual_sum,
                 `Individual # clones` = individual_clones) %>%
-  write.table("Table_summary.csv",
+  write.table("Table_summary.tsv",
               col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
 
 
@@ -339,7 +339,8 @@ xaxis_colors <- c(
 # patient-wide simulations
 ```{r}
 calc_overlap <- function(ids, bin_index) {
-  abund_ids <- ids[duplicated(ids)]
+  # get unique ones that are duplicated...
+  abund_ids <- unique(ids[duplicated(ids)])
   total_count <- 0
   
   for (i in abund_ids) {
@@ -514,6 +515,7 @@ for (u in uniq_exp) {
        device = "svg", width = 30, height = 40, units = "cm")
 }
 ```
+
 
 # clonal expansion graph
 ## FIG 4
@@ -737,6 +739,7 @@ make_legend(cell_colors_chronic,
 
 ```
 
+
 # Genomic Heatmaps
 ```{r}
 convert_to_mrc_acceptable <- function(df) {
@@ -837,6 +840,7 @@ df_pre_mrc %>%
   make_heatmaps(annot_ref, "exp_location_clonal", c("Stage", "Compartment", "Clonal"))
 ```
 
+
 # overall stat counts
 ```{r}
 df_compiled %>%
@@ -927,6 +931,7 @@ site_annot_graph <- ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = 
 saveRDS(site_annot_graph, glue("{fig_rds_prefix}/site_annot_graph.rds"))
 ggsave(filename = "figs/site_annot_subset.svg", plot = site_annot_graph, device = "svg", width = 9, height = 6)
 ```
+
 
 # in_gene comparison
 ```{r}
@@ -1045,6 +1050,7 @@ compare_enrichment(all_stats, "Acute", "Chronic")
 compare_enrichment(all_stats, "Chronic", "ART")
 ```
 
+
 # fisher test for proportion of clones
 ```{r}
 calc_sig_n_clones <- function(stage) {
@@ -1070,6 +1076,7 @@ calc_sig_n_clones("ART")
 calc_sig_n_clones("Acute")
 calc_sig_n_clones("Chronic")
 ```
+
 
 
 # look at position of nearest neighbor integration site on chromosome
@@ -1106,6 +1113,7 @@ df_compiled %>%
   theme_classic()
 ```
 
+
 # gene annotation
 ## SUP FIGS
 ```{r}
@@ -1129,6 +1137,7 @@ get_unique_ingene(df_compiled, exp == "Acute", location, "acute_by_loc.tsv")
 get_unique_ingene(df_compiled, exp == "Chronic", location, "chronic_by_loc.tsv")
 get_unique_ingene(df_compiled, exp == "ART", location, "art_by_loc.tsv")
 ```
+
 
 # rnaseq_comparison
 ```{r}
@@ -1248,5 +1257,12 @@ ggsave("figs/tx_comp_tfh.svg", plot = tfh,
 
 ggsave("figs/tx_comp_nontfh.svg", plot = nontfh,
        device = "svg", units = "in", width = 7, height = 3)
+```
+
+
+```{r}
+df_compiled %>% group_by(exp) %>% arrange(desc(abund), .by_group=TRUE) %>% top_n(3, abund)
+
+df_compiled %>% group_by(patient_anon_v2, posID) %>% filter(n() > 1)
 ```
 
