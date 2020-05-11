@@ -192,7 +192,19 @@ df_compiled %>%
   write.table("Table_summary.tsv",
               col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
 
+df_compiled %>%
+  dplyr::select(patient_anon_v2, location, cell, exp, posID, abund, gene_plot) %>%
+  dplyr::rename(Individual = patient_anon_v2,
+         Compartment = location,
+         Cell = cell,
+         Stage = exp,
+         `Sonic_Abundance` = abund,
+         `Gene/nearest gene` = gene_plot) %>%
+  write.table("Supplemental_File_1.tsv", quote = FALSE, sep = "\t", row.names = FALSE)
+```
 
+
+```{r}
 df_clones <- df_compiled %>%
   mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
   group_by(exp, patient_anon_v2, location, cell) %>%
@@ -368,7 +380,7 @@ calc_overlap <- function(ids, bin_index) {
   return(total_count)
 }
 
-uniq_patients <- unique(df_compiled$patient_anon_v2)
+uniq_patients <- sort(unique(df_compiled$patient_anon_v2))
 graphs <- list()
 
 for (p in uniq_patients) {
@@ -427,6 +439,11 @@ for (p in uniq_patients) {
          width = 4,
          height = 4)
 }
+
+full_plot <- cowplot::plot_grid(plotlist = graphs, nrow = 3)
+ggsave(filename = "figs/global_overlap_ecdf_all.svg", plot = full_plot, device = "svg")
+ggsave(filename = "figs/global_overlap_ecdf_all.png", plot = full_plot,
+       dpi = "retina", width = 8, height = 6, device = "png")
 ```
 
 # hotspot graph
