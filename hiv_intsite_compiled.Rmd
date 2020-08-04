@@ -1277,9 +1277,179 @@ ggsave("figs/tx_comp_nontfh.svg", plot = nontfh,
 ```
 
 
+# revision, stage comparisons
 ```{r}
-df_compiled %>% group_by(exp) %>% arrange(desc(abund), .by_group=TRUE) %>% top_n(3, abund)
+# set ids
+df_anno <- data.frame(gr_anno) %>%
+  mutate(annotation = str_remove(annotation, " \\(ENST.*\\)"),
+         annotation = ifelse(grepl("Intron$", annotation), "Intron", annotation),
+         annotation = ifelse(grepl("Exon$", annotation), "Exon", annotation))
 
-df_compiled %>% group_by(patient_anon_v2, posID) %>% filter(n() > 1)
+df_compiled_anno <- data.frame(gr_long_anno) %>%
+  mutate(annotation = str_remove(annotation, " \\(ENST.*\\)"),
+         annotation = ifelse(grepl("Intron$", annotation), "Intron", annotation),
+         annotation = ifelse(grepl("Exon$", annotation), "Exon", annotation))
+
+# look at distribution on chromosome
+chr_lengths <- read.csv("chr_lengths.csv")
+chr_lengths <- setNames(as.numeric(chr_lengths$length), chr_lengths$chr)
+
+df_compiled_anno %>%
+  mutate(chrom = str_match(string = seqnames, pattern = "(?<=chr).*"),
+         chr_rel = start / chr_lengths[chrom]) %>%
+  ggplot(aes(x = chr_rel, after_stat(density), color = exp)) +
+  geom_freqpoly(binwidth = 0.01) +
+  theme_classic() +
+  labs(color = "Infection stage",
+       x = "Normalized chromosomal position",
+       y = "Density") +
+  ggsave(filename = "figs/rel_chr_loc.svg", device = "svg", width = 6, height = 2)
+
+# overall distribution
+df_anno %>%
+  group_by(annotation) %>%
+  summarize(total_abund = sum(abund)) %>%
+  ungroup() %>%
+  mutate(total_prop = total_abund / sum(total_abund) * 100)
+
+
+lg_panel_style <- list(
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 100)),
+  theme_classic(),
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        legend.position = "bottom",
+        strip.background = element_rect(color = "#ffffff"))
+)
+
+# by infection stage
+df_anno %>%
+  group_by(patient_anon_v2, exp, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  # ggpubr::compare_means(formula = annotation_prop ~ exp, data = ., group.by = "annotation")
+  ggplot(aes(x = annotation, y = annotation_prop, group = exp)) +
+  geom_bar(aes(fill = exp), stat = "summary", fun = "mean", position = position_dodge2(preserve = "single")) +
+  geom_point(position = position_dodge(width = 0.9)) +
+  lg_panel_style +
+  labs(x = "Annotation",
+       y = "Proportion of sites (%)",
+       fill = "Infection stage") +
+  ggsave(filename = "figs/gene_annot_all_exp.svg", device = "svg", width = 8.5, height = 4)
+
+
+# by blood vs tissue
+df_anno %>%
+  mutate(location2 = ifelse(location == "PBMC", "Blood", "Tissue")) %>%
+  group_by(patient_anon_v2, exp, location2, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2, exp, location2) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  ggplot(aes(x = annotation, y = annotation_prop, group = location2)) +
+  geom_bar(aes(fill = location2), stat = "summary", fun = "mean",
+           position = position_dodge2(preserve = "single")) +
+  geom_point(position = position_dodge(width = 0.9)) +
+  facet_wrap(~ exp) +
+  lg_panel_style +
+  labs(x = "Annotation",
+       y = "Proportion of sites (%)",
+       fill = "Compartment") +
+  ggsave(filename = "figs/gene_annot_all_compartment.svg", device = "svg", width = 8.5, height = 4)
+
+
+# by residency
+df_anno %>%
+  mutate(resident = grepl("(GC-Tfh|CD69\\+)", cell)) %>%
+  mutate(resident_detailed = ifelse(resident,
+                           "Resident\n(CD69+ or GC-Tfh phenotypes)",
+                           "Non-resident")) %>%
+  group_by(patient_anon_v2, exp, resident_detailed, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2, exp, resident_detailed) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  ggplot(aes(x = annotation, y = annotation_prop, group = resident_detailed)) +
+  geom_bar(aes(fill = resident_detailed), stat = "summary", fun = "mean",
+           position = position_dodge2(preserve = "single")) +
+  geom_point(position = position_dodge(width = 0.9)) +
+  facet_wrap(~ exp) +
+  lg_panel_style +
+  labs(x = "Annotation",
+       y = "Proportion of sites (%)",
+       fill = "Cell phenotype") +
+  ggsave(filename = "figs/gene_annot_all_res.svg", device = "svg", width = 8.5, height = 4)
+
+
+plot_by_infection_stage <- function(df, .grouping_var) {
+  .grouping_var <- enquo(.grouping_var)
+  
+  g_list <- by(data = df, INDICES = df$exp, FUN = function(sm_df) {
+      sm_df <- droplevels(sm_df)
+      g <- sm_df %>%
+        ggplot(aes(x = annotation, y = annotation_prop, group = !!.grouping_var)) +
+        geom_bar(aes(fill = !!.grouping_var), stat = "summary", fun = "mean",
+                 position = position_dodge2(preserve = "single")) +
+        geom_point(aes(color = cell), position = position_dodge(width = 0.9)) +
+        theme_classic() +
+        scale_y_continuous(expand = c(0, 0), limits = c(0, 110)) +
+        theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+              legend.title = element_blank(),
+              legend.text = element_text(size = 7),
+              legend.position = "bottom",
+              axis.title.x = element_text(size = 8),
+              axis.title.y = element_text(size = 8)) +
+        scale_fill_manual(values = c("#000000", "#cccccc"), guide = "none") +
+        guides(color = guide_legend(ncol = 3)) +
+        labs(x = "Annotation",
+             y = "Proportion of sites (%)",
+             fill = "Compartment",
+             color = "Cell") +
+        ggpubr::stat_compare_means(hide.ns = TRUE,
+                                   method = "wilcox.test",
+                                   label = "p.signif",
+                                   label.y.npc = "center",
+                                   size = 8)
+      
+      return(g)
+  })
+  
+  return(g_list)
+}
+
+df_anno %>%
+  mutate(location2 = ifelse(location == "PBMC", "Blood", "Tissue"),
+         annotation = ifelse(!annotation %in% c("Intron", "Distal Intergenic"), "Other", annotation),
+         annotation = factor(annotation, levels = c("Intron", "Distal Intergenic", "Other"))) %>%
+  group_by(patient_anon_v2, exp, location2, cell, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2, location2, cell) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  # ggpubr::compare_means(formula = annotation_prop ~ location2, data = ., group.by = c("exp", "annotation")) %>%
+  # View()
+  plot_by_infection_stage(., location2) %>%
+  patchwork::wrap_plots() %>%
+  ggsave(filename = "figs/gene_annot_loc.svg", device = "svg", width = 7, height = 4)
+
+df_anno %>%
+  mutate(resident = grepl("(GC-Tfh|CD69\\+)", cell)) %>%
+  mutate(resident_detailed = ifelse(resident,
+                           "Resident\n(CD69+ or GC-Tfh phenotypes)",
+                           "Non-resident"),
+         annotation = ifelse(!annotation %in% c("Intron", "Distal Intergenic"), "Other", annotation),
+         annotation = factor(annotation, levels = c("Intron", "Distal Intergenic", "Other"))) %>%
+  group_by(patient_anon_v2, exp, resident_detailed, cell, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2, resident_detailed, cell) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  ggpubr::compare_means(formula = annotation_prop ~ resident_detailed, data = ., group.by = c("exp", "annotation")) %>%
+  View()
+  plot_by_infection_stage(., resident_detailed) %>%
+  patchwork::wrap_plots() %>%
+  ggsave(filename = "figs/gene_annot_res.svg", device = "svg", width = 7, height = 4)
 ```
+
 
