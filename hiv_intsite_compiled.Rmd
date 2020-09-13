@@ -1,0 +1,1446 @@
+---
+title: "hiv_intsite_compiled"
+author: "Vincent Wu"
+date: "10/3/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load pkgs
+```{r, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(glue)
+library(GenomicRanges)
+library(hiAnnotator)
+library(RColorBrewer)
+library(scales)
+library(circlize)
+library(grid)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(ChIPseeker)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(hotROCs)
+library(reshape2)
+library(svglite)
+library(egg)
+
+# known overlapping functions
+trim <- GenomicRanges::trim
+
+source("scripts/mrc_generator.R")
+source("scripts/heatmapMaker.R")
+source("scripts/epigeneticFeatures.R")
+source("scripts/random_site.R")
+source("scripts/heatmap_to_ggplot2.R")
+source("scripts/hiv_int_helper_fx.R")
+source("scripts/ggplot2_extensions.R")
+```
+
+# default settings
+```{r}
+fig_rds_prefix <- "rds_figs"
+```
+
+
+# load and merge data files
+```{r}
+df_compiled <- readRDS("data/df_compiled.rds")
+
+df_compiled <- df_compiled %>%
+  dplyr::filter(patient_anon != "") %>%
+  dplyr::filter(seqnames != "chrM") %>%
+  mutate(exp = str_match(run, pattern = "(\\w+)_(\\d)")[, 2]) %>%
+  mutate(exp = ifelse(exp == "art", "ART", str_to_title(exp)),
+         cell_oldname = cell)
+
+# set proper names for metacolumns
+df_compiled$location <- sapply(df_compiled$location, function(x) {
+  val <- ""
+  if (x == "pbmc") {
+    val <- "PBMC"
+  } else if (x == "tonsil") {
+    val <- "Tonsil"
+  } else {
+    val <- toupper(x)
+  }
+  
+  return(val)
+})
+
+df_compiled$cell <- sapply(seq_along(df_compiled$cell_oldname), function(i) {
+  row <- df_compiled[i, ]
+  cell <- row$cell_oldname
+  loc <- row$location
+  exp <- row$exp
+  
+  val <- ""
+  error <- "error"
+  
+  if (exp == "ART" & loc == "Tonsil") {
+    val <- case_when(
+      cell == "naive" ~ "Naive",
+      cell == "69pos" ~ "HLA-DR- CD69+",
+      cell == "69neg" ~ "HLA-DR- CD69-",
+      cell == "gctfh" ~ "HLA-DR- GC-Tfh",
+      TRUE ~ error
+    )
+  } else if (exp == "ART" & loc == "PBMC") {
+    val <- case_when(
+      cell == "naive" ~ "Naive",
+      cell == "tcm" ~ "CD69- Tcm",
+      cell == "tem" ~ "CD69- Tem",
+      TRUE ~ error
+    )
+  } else {
+    val <- case_when(
+      cell == "naive" ~ "Naive",
+      cell == "69pos" ~ "CD69+",
+      cell == "69neg" ~ "CD69-",
+      cell == "gctfh" ~ "GC-Tfh",
+      cell == "tcm" ~ "Tcm",
+      cell == "tem" ~ "Tem",
+      cell == "temra" ~ "Temra",
+      TRUE ~ error
+    )    
+  }
+  
+  return(val)
+})
+
+# label in/out of gene
+df_compiled <- df_compiled %>%
+  mutate(gene_plot_noid = case_when(
+    in_gene == "FALSE" & abs(nearest_geneDist) <= 50000 ~ glue("{nearest_gene}+"),
+    in_gene == "FALSE" & abs(nearest_geneDist) > 50000 ~ glue("{nearest_gene}#"),
+    TRUE ~ in_gene
+  )) %>%
+  mutate(gene_plot = paste(gene_plot_noid, posID))
+
+# add new numbering system
+df_compiled <- df_compiled %>%
+  mutate(patient_anon_v2 = case_when(
+    patient_anon == "A" ~ "T1",
+    patient_anon == "B" ~ "T2",
+    patient_anon == "C" ~ "T3",
+    patient_anon == "A_D" ~ "A1",
+    patient_anon == "A_E" ~ "A2",
+    patient_anon == "A_F" ~ "A3",
+    patient_anon == "C_G" ~ "C1",
+    patient_anon == "C_H" ~ "C2",
+    patient_anon == "C_I" ~ "C3",
+    TRUE ~ "Error"
+  ))
+
+# change order of infection stage
+df_compiled <- df_compiled %>%
+  mutate(exp = factor(exp, levels = c("Acute", "Chronic", "ART")))
+
+gr_compiled <- makeGRangesFromDataFrame(df_compiled,
+                                        keep.extra.columns = TRUE)
+```
+
+# generate giant supplemental table
+```{r}
+count_abundance_by <- function(df, name, ...) {
+  grouping <- enquos(...)
+  
+  name_sum <- glue("{name}_sum")
+  name_clones <- glue("{name}_clones")
+  
+  df %>%
+    ungroup() %>%
+    group_by(!!!grouping) %>%
+    mutate(!!name_sum := sum(total_abund),
+           !!name_clones := sum(total_clone))
+}
+
+cell_counts <- read.csv("data/sort_counts.csv", stringsAsFactors = FALSE) %>%
+  dplyr::rename(location = Compartment,
+                patient_anon_v2 = Indivdiual,
+                cell = Subset)
+
+df_compiled %>%
+  mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
+  group_by(exp, patient_anon_v2, location, cell) %>%
+  summarise(total_abund = sum(abund),
+            total_clone = sum(clone)) %>%
+  count_abundance_by("location", exp, patient_anon_v2, location) %>%
+  count_abundance_by("individual", exp, patient_anon_v2) %>%
+  ungroup() %>%
+  mutate(exp = factor(exp, levels = c("ART", "Acute", "Chronic"))) %>%
+  arrange(exp) %>%
+  left_join(cell_counts, by = c("patient_anon_v2", "location", "cell")) %>%
+  dplyr::select(exp, patient_anon_v2, location, cell, Cells.Sorted, total_abund,
+               total_clone, location_sum, location_clones, individual_sum,
+               individual_clones) %>%
+  dplyr::rename(Stage = exp,
+                Individual = patient_anon_v2,
+                Compartment = location,
+                Subset = cell,
+                `Cells sorted` = Cells.Sorted,
+                `Subset Abundance` = total_abund,
+                `Subset # clones` = total_clone,
+                `Compartment Abundance` = location_sum,
+                `Compartment # clones` = location_clones,
+                `Individual Abundance` = individual_sum,
+                `Individual # clones` = individual_clones) %>%
+  write.table("Table_summary.tsv",
+              col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
+
+df_compiled %>%
+  dplyr::select(patient_anon_v2, location, cell, exp, posID, abund, gene_plot) %>%
+  dplyr::rename(Individual = patient_anon_v2,
+         Compartment = location,
+         Cell = cell,
+         Stage = exp,
+         `Sonic_Abundance` = abund,
+         `Gene/nearest gene` = gene_plot) %>%
+  write.table("Supplemental_File_1.tsv", quote = FALSE, sep = "\t", row.names = FALSE)
+```
+
+
+```{r}
+df_clones <- df_compiled %>%
+  mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
+  group_by(exp, patient_anon_v2, location, cell) %>%
+  summarise(total_unique_sites = n(),
+            total_abund = sum(abund),
+            total_clone = sum(clone)) %>%
+  ungroup() %>%
+  group_by(exp, cell) %>%
+  summarize(all_uniq_sites = sum(total_unique_sites),
+            all_total_clone = sum(total_clone))
+
+resident_clones <- df_compiled %>%
+  mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
+  group_by(exp, patient_anon_v2, location, cell) %>%
+  summarise(total_unique_sites = n(),
+            total_abund = sum(abund),
+            total_clone = sum(clone)) %>%
+  mutate(resident = grepl("(GC-Tfh|CD69\\+)", cell)) %>%
+  mutate(resident_detailed = ifelse(resident,
+                           "Resident\n(CD69+ or GC-Tfh phenotypes)",
+                           "Non-resident")) %>%
+  ungroup() %>%
+  group_by(exp, patient_anon_v2, location, resident_detailed) %>%
+  summarise(all_uniq_sites = sum(total_unique_sites),
+            all_total_clone = sum(total_clone)) %>%
+  ungroup() %>%
+  dplyr::mutate(percent = all_total_clone / all_uniq_sites * 100,
+                exp_resident = paste(exp, resident_detailed, sep = "_"))
+
+resident_graph <- ggplot(resident_clones, aes(x = exp, y = percent, group = resident_detailed)) +
+  geom_bar(aes(fill = resident_detailed),
+           width = 0.8, position = position_dodge(width = 0.85), stat = "summary") +
+  geom_point(aes(shape = location),
+             size = 2,
+             position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.85)) +
+  labs(x = "Infection stage",
+       y = "% clonal of total unique sites",
+       fill = "Cell types",
+       shape = "Compartment") +
+  scale_fill_manual(values = c("red", "blue")) +
+  theme_classic()
+
+ggsave("figs/resident_clonal_expansion.svg", plot = resident_graph,
+       device = "svg", width = 6, height = 3)
+
+resident_aov <- aov(percent ~ resident_detailed * exp, data = resident_clones)
+summary(resident_aov)
+TukeyHSD(resident_aov, which = "exp")
+
+
+exp_combos <- combn(levels(resident_clones$exp), 2)
+exp_p_vals <- apply(exp_combos, MARGIN = 2, function(x) {
+  df <- resident_clones %>%
+    dplyr::filter(exp %in% x)
+  
+  print(x)
+  wc <- wilcox.test(percent ~ exp, data = df)
+  print(wc$p.value)
+  
+  return(wc)
+})
+
+exps <- levels(resident_clones$exp)
+residence_p_vals <- sapply(exps, function(x) {
+  df <- resident_clones %>%
+    dplyr::filter(exp == x)
+  
+  print(x)
+  wc <- wilcox.test(percent ~ resident_detailed, data = df)
+  print(wc$p.value)
+  
+  return(wc)
+})
+
+other_combos <- combn(unique(resident_clones$exp_resident), 2)
+other_p_vals <- apply(other_combos, MARGIN = 2, function(x) {
+  df <- resident_clones %>%
+    dplyr::filter(exp_resident %in% x)
+  
+  wc <- wilcox.test(percent ~ exp_resident, data = df)
+  
+  return(wc$p.value)
+})
+
+View(data.frame(t(other_combos)) %>%
+  mutate(p_val = other_p_vals,
+         sig = case_when(p_val < 0.001 ~ "***",
+                         p_val < 0.01 ~ "**",
+                         p_val < 0.05 ~ "*",
+                         TRUE ~ "ns")))
+
+# save clone table
+df_clones %>%
+  dplyr::mutate(percent = format(round(all_total_clone / all_uniq_sites * 100, 2), nsmall = 2)) %>%
+  dplyr::rename(Stage = exp,
+                Subset = cell,
+                `Total unique sites` = all_uniq_sites,
+                `Clonal sites` = all_total_clone,
+                `% clonal` = percent) %>%
+  write.table("clone_ratio.tsv", col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
+  
+```
+
+# experiment colors
+```{r}
+tcm_color <- "#b2df8a"
+tem_color <- "#fb9a99"
+gctfh_color <- "#33a02c"
+pos69_color <- "#ff7f00"
+neg69_color <- "#6a3d9a"
+
+xaxis_colors <- c(
+  "ART" = "#0000ff",
+  "Acute" = "#0000ff",
+  "Chronic" = "#0000ff",
+  "T1" = "#ff00ff",
+  "T2" = "#ff11ff",
+  "T3" = "#ff22ff",
+  "A1" = "#ff33ff",
+  "A2" = "#ff44ff",
+  "A3" = "#ff55ff",
+  "C1" = "#ff66ff",
+  "C2" = "#ff77ff",
+  "C3" = "#ff88ff",
+  "CLN" = "#a6cee3",
+  "ILN" = "#1f78b4",
+  "Tonsil" = "#cab2d6",
+  "PBMC" = "#e31a1c",
+  "CD69- Tcm" = tcm_color,
+  "Tcm" = tcm_color,
+  "CD69- Tem" = tem_color,
+  "Tem" = tem_color,
+  "Temra" = "#ffff99",
+  "Naive" = "#b15928",
+  "HLA-DR- GC-Tfh" = gctfh_color,
+  "GC-Tfh" = gctfh_color,
+  "HLA-DR- CD69+" = pos69_color,
+  "CD69+" = pos69_color,
+  "HLA-DR- CD69-" = neg69_color,
+  "CD69-" = neg69_color
+)
+```
+
+# patient-wide simulations
+```{r}
+calc_overlap <- function(ids, bin_index) {
+  # get unique ones that are duplicated...
+  abund_ids <- unique(ids[duplicated(ids)])
+  total_count <- 0
+  
+  for (i in abund_ids) {
+    bin_count <- 0
+    for (b in seq(2, length(bin_index) + 1, 1)) {
+      start <- bin_index[b - 1]
+      
+      if (b == length(bin_index) + 1) {
+        end <- length(ids)
+      } else {
+        end <- bin_index[b] - 1        
+      }
+      
+      bin <- ids[start:end]
+      if (sum(bin == i) > 0) {
+        bin_count <- bin_count + 1
+      }
+    }
+    
+    if (bin_count >= 2) {
+      total_count <- total_count + 1
+    }
+  }
+  
+  return(total_count)
+}
+
+uniq_patients <- sort(unique(df_compiled$patient_anon_v2))
+graphs <- list()
+
+for (p in uniq_patients) {
+  print(paste("Running simulation for", p))
+  
+  trial_df <- df_compiled %>%
+    filter(patient_anon_v2 == p) %>%
+    mutate(location_cell = paste(location, cell, sep = "_")) %>%
+    mutate(group_id = group_indices(., location_cell)) %>%
+    arrange(group_id)
+  
+  bin_index <- which(!duplicated(trial_df$group_id))
+  ids <- trial_df$posID
+  weights <- trial_df$abund
+  
+  # make pool with correct abundances
+  pool_ids <- rep(ids, times = floor(weights))
+  
+  # find weights by group
+  g_sum_df <- trial_df %>%
+    group_by(group_id) %>%
+    summarise(g_sum = sum(floor(abund)))
+  
+  weights_grouped <- g_sum_df$g_sum
+  
+  bin_index_exp <- cumsum(weights_grouped)
+  bin_index_exp <- bin_index_exp[-length(bin_index_exp)] + 1
+  bin_index_exp <- c(1, bin_index_exp)
+  
+  # calculate overlap
+  act_overlaps <- sum(duplicated(ids))
+  
+  # run simulations for overlap
+  test <- sapply(seq(1, 10000), function(x) {
+    pool_scramble <- sample(pool_ids)
+    calc_overlap(pool_scramble, bin_index_exp)
+  })
+
+  print(paste("Actual overlaps:", act_overlaps))
+  
+  g_df <-  data.frame(x = test)
+  g <- ggplot(data = g_df, aes(x = x)) +
+    geom_vline(xintercept = act_overlaps, color = "#AAAAAA", linetype = "dashed") +
+    stat_ecdf(geom = "step") +
+    expand_limits(x = 0) +
+    labs(x = "",
+         y = "",
+         title = p) + 
+    theme_classic()
+  
+  graphs[[p]] <- g
+    
+  ggsave(filename = paste("figs/global_overlap_ecdf_", p, ".png", sep = ""),
+         plot = graphs[[p]],
+         device = "png",
+         width = 4,
+         height = 4)
+}
+
+full_plot <- cowplot::plot_grid(plotlist = graphs, nrow = 3)
+ggsave(filename = "figs/global_overlap_ecdf_all.svg", plot = full_plot, device = "svg")
+ggsave(filename = "figs/global_overlap_ecdf_all.png", plot = full_plot,
+       dpi = "retina", width = 8, height = 6, device = "png")
+```
+
+# hotspot graph
+## FIG 3
+
+```{r}
+uniq_exp <- unique(df_compiled$exp)
+
+for (u in uniq_exp) {
+  df_plot_all <- df_compiled %>%
+    dplyr::filter(exp == u) %>%
+    dplyr::filter(!(in_gene == "FALSE" & abs(nearest_geneDist <= 50000))) %>%
+    arrange(desc(patient_anon_v2), desc(location), desc(cell)) %>%
+    mutate(cell_patient = paste(patient_anon_v2, location, cell, sep = " / "),
+           cell_patient = factor(cell_patient),
+           nearest_gene = factor(nearest_gene, levels = unique(nearest_gene)))
+  
+  sim_matrix <- matrix(0L, nrow = length(levels(df_plot_all$cell_patient)),
+                       ncol = length(levels(df_plot_all$nearest_gene)))
+  
+  for (i in seq_along(df_plot_all$cell_patient)) {
+    df_row <- df_plot_all[i, ]
+    
+    row <- as.numeric(df_row$cell_patient)
+    col <- as.numeric(df_row$nearest_gene)
+    
+    if (sim_matrix[row, col] == 0) {
+      sim_matrix[row, col] <- sim_matrix[row, col] + 1
+    }
+  }
+  
+  melted_sim <- melt(sim_matrix) %>%
+    mutate(Var1 = factor(Var1, labels = levels(df_plot_all$cell_patient))) %>%
+    separate(Var1,
+             into = c("patient", "sample_type", "cell"),
+             remove = FALSE, sep = " / ") %>%
+    dplyr::filter(value > 0) %>%
+    mutate(Var2 = factor(Var2))
+  
+  cs <- base::colSums(sim_matrix)
+  
+  heatmap_theme <- theme(axis.text.x = element_text(size = 7, lineheight = 2),
+                         axis.title.x = element_blank(),
+                         panel.background = element_rect(fill = "#132b43"),
+                         panel.grid.major.y = element_blank(),
+                         panel.grid.minor.y = element_blank(),
+                         panel.grid.major.x = element_blank(),
+                         legend.position = "none")
+  
+  if (u == "Chronic") {
+    col_of_interest <- which(colSums(sim_matrix) >= 4)
+  } else {
+    col_of_interest <- which(colSums(sim_matrix) >= 3)
+  }
+
+  of_interest <- melted_sim %>%
+    dplyr::filter(Var2 %in% col_of_interest) %>%
+    mutate(x_lbl = glue("{patient}\n{sample_type}\n{cell}"))
+  
+  g <- ggplot(of_interest, aes(x_lbl, factor(Var2), fill = value)) +
+    geom_tile(fill = "#56b1f7", width = 1, height = 1, color = "#ffffff") +
+    scale_y_discrete(breaks = col_of_interest,
+                     labels = levels(df_plot_all$nearest_gene)[col_of_interest]) +
+    theme_bw() +
+    labs(y = "Gene or Nearest Gene") +
+    heatmap_theme +
+    coord_equal()
+  
+  p1_x <- ggplot_build(g)$layout$panel_params[[1]]$x$get_labels()
+  p1_y <- ggplot_build(g)$layout$panel_params[[1]]$y$get_labels()
+  
+  panel_scale <- 1
+  p <- egg::set_panel_size(g, height = unit(length(p1_y) / panel_scale, "cm"),
+                          width = unit(length(unique(p1_x)) / panel_scale, "cm"))
+  
+  
+  p2 <- make_xaxis_plot(p1_x, c("Patient", "Compartment", "Cell"), xaxis_colors, sep = "\n")
+  
+  p_comb <- cowplot::plot_grid(p, p2, ncol = 1, align = "v")
+  
+  saveRDS(p_comb, glue("{fig_rds_prefix}/overlap_hotspot_{u}.rds"))
+  saveRDS(p, glue("{fig_rds_prefix}/overlap_hotspot_{u}_p1.rds"))
+  saveRDS(p2, glue("{fig_rds_prefix}/overlap_hotspot_{u}_p2.rds"))
+  
+  ggsave(glue("figs/overlap_hotspot_{u}.svg"), plot = p_comb,
+       device = "svg", width = 30, height = 40, units = "cm")
+}
+```
+
+
+# clonal expansion graph
+## FIG 4
+
+```{r}
+make_clonal_expansion_graph <- function(df, p, exp_type) {
+  if (exp_type == "Acute") {
+    abund_filter <- 3
+  } else {
+    abund_filter <- 2
+  }
+  
+  df_rel <- df %>%
+    dplyr::filter(patient_anon_v2 == p) %>%
+    ungroup() %>%
+    group_by(main_id, cell) %>%
+    mutate(group_abund = sum(abund),
+           rel_abund = abund / group_abund,
+           gene_plot_2 = ifelse(abund < abund_filter, "Low Abundance", gene_plot),
+           plot_lbl = ifelse(gene_plot_2 != "Low Abundance" & rel_abund >= 0.1,
+                             gene_plot_noid,
+                             ""),
+           x_axis = paste0(location, "\n",
+                          gsub(" ", "\n", cell),
+                          "\n",
+                          "(", sum(abund), ")")) %>%
+    arrange(rel_abund, .by_group = TRUE)
+  
+  uniq_genes <- unique(df_rel$gene_plot_2)
+    
+  df_rel$gene_plot_2 <- factor(df_rel$gene_plot_2,
+                                  levels = c("Low Abundance",
+                                             uniq_genes[uniq_genes != "Low Abundance"]))
+    
+  colors <- hue_pal()(length(uniq_genes))
+  colors[1] <- "#dddddd"
+  
+  legend_items <- length(unique(df_rel$gene_plot_2))
+  legend_ncol <- legend_items %/% 10 + 1
+  
+  g <- ggplot(df_rel, aes(x = x_axis, y = rel_abund, fill = gene_plot_2)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = plot_lbl), size = 8/.pt, position = position_stack(vjust = 0.5)) +
+    theme_classic() +
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          text = element_text(size = 8),
+          legend.title = element_blank(),
+          legend.text = element_text(size = 8),
+          legend.position = "right") +
+    guides(fill = guide_legend(override.aes = list(size = 1),
+                           ncol = legend_ncol)) +
+    scale_fill_manual(values = colors) +
+    labs(title = p,
+         x = "Patient and Cell Type (n = total inferred cells)",
+         y = paste0("Relative sonic abundance \n",
+         "(Low Abundance < ", abund_filter, " sonic abund)"))
+  
+  scaled_g <- egg::set_panel_size(g, height = unit(3, "cm"),
+                          width = unit(length(unique(df_rel$x_axis)) + 3.5, "cm"))
+  
+  return(scaled_g)
+}
+
+uniq_patients <- unique(df_compiled$patient_anon_v2)
+clonal_graphs <- list()
+for (p in uniq_patients) {
+  if (startsWith(p, "T")) {
+    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "ART")
+  } else if (startsWith(p, "C")) {
+    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Chronic")
+  } else {
+    clonal_graphs[[p]] <- make_clonal_expansion_graph(df_compiled, p, "Acute")
+  }
+}
+
+save_rel_abund_graphs <- function(prefix, stage) {
+  g_rel_abund <- cowplot::plot_grid(clonal_graphs[[glue("{prefix}1")]],
+                                    clonal_graphs[[glue("{prefix}2")]],
+                                    clonal_graphs[[glue("{prefix}3")]],
+                                    ncol = 1, align = "h")
+  
+  cowplot::save_plot(glue("figs/rel_abund_{stage}.svg"),
+                     g_rel_abund,
+                     base_width = NULL, base_height = 25, device = "svg")
+  
+  return("saved graph")
+}
+
+save_rel_abund_graphs("T", "art")
+save_rel_abund_graphs("A", "acute")
+save_rel_abund_graphs("C", "chronic")
+
+# saveRDS(art_rel_abund, glue("{fig_rds_prefix}/art_rel_abund.rds"))
+# saveRDS(acute_rel_abund, glue("{fig_rds_prefix}/acute_rel_abund.rds"))
+# saveRDS(chronic_rel_abund, glue("{fig_rds_prefix}/chronic_rel_abund.rds"))
+```
+
+# circos plot
+## FIG 5
+
+```{r}
+uniq_patients <- unique(df_compiled$patient_anon_v2)
+
+df_uniq_cells <- df_compiled %>%
+  mutate(sample_cell = paste(location, cell, sep = " | ")) %>%
+  group_by(exp) %>%
+  distinct(sample_cell)
+
+df_uniq_cells_art <- df_uniq_cells %>%
+  dplyr::filter(exp == "ART")
+
+df_uniq_cells_acute <- df_uniq_cells %>%
+  dplyr::filter(exp == "Acute")
+
+
+df_uniq_cells_chronic <- df_uniq_cells %>%
+  dplyr::filter(exp == "Chronic")
+
+
+cell_colors_art <- brewer.pal(length(df_uniq_cells_art$sample_cell), "Paired")
+cell_colors_acute <- brewer.pal(length(df_uniq_cells_acute$sample_cell), "Paired")
+cell_colors_chronic <- brewer.pal(length(df_uniq_cells_chronic$sample_cell), "Paired")
+
+arrange_posID <- function(posID) {
+  set.seed(1)
+  return(sample(posID))
+}
+
+for (p in uniq_patients) {
+  if (grepl("A", p)) {
+    cell_colors <- cell_colors_acute
+    uniq_cells <- df_uniq_cells_acute$sample_cell
+    abund_threshold <- 3
+    
+  } else if (grepl("C", p )) {
+    cell_colors <- cell_colors_chronic
+    uniq_cells <- df_uniq_cells_chronic$sample_cell
+    abund_threshold <- 2
+    
+  } else {
+    cell_colors <- cell_colors_art
+    uniq_cells <- df_uniq_cells_art$sample_cell
+    abund_threshold <- 2
+  }
+  
+  df_chord_test <- df_compiled %>%
+    mutate(sample_cell = factor(paste(location, cell, sep = " | "),
+                                levels = uniq_cells)) %>%
+    dplyr::filter(patient_anon_v2 == p) %>%
+    ungroup() %>%
+    arrange(sample_cell) %>%
+    group_by(sample_cell) %>%
+    arrange(arrange_posID(posID), .by_group = TRUE) %>%
+    add_tally(name = "group_n") %>%
+    ungroup() %>%
+    mutate(posID = factor(posID, levels = unique(posID)),
+           from_posID = seq_along(posID),
+           uniq_posID = as.numeric(posID),
+           value = ifelse(duplicated(posID) == TRUE, 1, 0),
+           cell_track_color = ifelse(group_n == 1,
+                                     paste0(cell_colors[sample_cell], "60"),
+                                     "#FFFFFFFF"),
+           abund_color = ifelse(abund >= abund_threshold, "#000000", "#CCCCCC"))
+  
+  svglite(paste("figs/chord_", p, "_new.svg", sep = ""),
+          bg = "transparent",
+          system_fonts = list(sans = "Arial"),
+          width = 10,
+          height = 10)
+  draw_chord(df_chord_test, uniq_cells, cell_colors, abund_scale)
+  dev.off()
+}
+
+make_legend <- function(cell_colors, uniq_cells, fn) {
+  df_legend <- data.frame(cell_col = cell_colors,
+              cell = factor(uniq_cells, levels = uniq_cells),
+              val = rnorm(length(uniq_cells)))
+
+  g <- ggplot(df_legend, aes(x = uniq_cells, y = val, fill = cell)) +
+    geom_bar(stat = "identity", color = "#FFFFFF") +
+    scale_fill_manual(values = paste(cell_colors, "80", sep = "")) +
+    theme(legend.position = "bottom",
+          legend.text = element_text(size = 12),
+          panel.grid = element_blank(),
+          panel.background = element_blank(),
+          axis.line = element_blank(),
+          axis.title = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          plot.background = element_blank(),
+          legend.title = element_blank()) +
+    guides(fill = guide_legend(override.aes = list(size = 10)))
+  
+  ggsave(fn, plot = g, device = "svg", width = 9)
+}
+
+make_legend(cell_colors_art,
+            df_uniq_cells_art$sample_cell,
+            "figs/chord_art_legend.svg")
+
+make_legend(cell_colors_acute,
+            df_uniq_cells_acute$sample_cell,
+            "figs/chord_acute_legend.svg")
+
+make_legend(cell_colors_chronic,
+            df_uniq_cells_chronic$sample_cell,
+            "figs/chord_chronic_legend.svg")
+
+```
+
+
+# Genomic Heatmaps
+```{r}
+convert_to_mrc_acceptable <- function(df) {
+  df_new <- df %>%
+    uncount(floor(abund)) %>%
+    group_by(sampleName) %>%
+    dplyr::mutate(group_n = n()) %>%
+    dplyr::filter(group_n >= 30) %>%
+    dplyr::ungroup() %>%
+    arrange(sampleName) %>%
+    dplyr::mutate(siteID = row_number(),
+                  gender = "m") %>%
+    data.frame()
+  
+  return(df_new)
+}
+
+make_heatmaps <- function(df, annot_ref, filter_type, sep_levels) {
+  heatmap_dir <- paste0("heatmaps/", filter_type)
+  heatmap_genomic <- paste0(heatmap_dir, "_genomic")
+  heatmap_epigenetic <- paste0(heatmap_dir, "_epigenetic")
+  
+  df_sites_meta <- convert_to_mrc_acceptable(df)
+  sites_mrcs <- generate_mrcs(df_sites_meta)
+  
+  # make genomic
+  gen_roc_fn <- file.path(heatmap_genomic, "roc.res.rds")
+  if (!file.exists(gen_roc_fn)) {
+    print('making genomic annotations')
+    
+    sites_mrcs_genomic <- annotate_genomic(sites_mrcs, annot_ref)
+    sites_to_ROC_ordinary(sites_mrcs_genomic,
+                          df_sites_meta[, c("siteID", "sampleName", "refGenome")],
+                          heatmap_genomic)
+  }
+  
+  print('making genomic heatmap')
+  gen <- heatmap_to_ggplot2(gen_roc_fn, "genomic", NULL, filter_type, sep_levels)
+  
+  # make epigenetic
+  epi_roc_fn <- file.path(heatmap_epigenetic, "roc.res.rds")
+  histoneorder <- epigenetic_features()
+  histoneorder <- histoneorder[!grepl("[-_]", histoneorder)]
+  histoneorder <- histoneorder[!grepl("Nucleo", histoneorder)]
+  histoneorder <- str_sort(histoneorder, numeric = TRUE)
+  
+  if (!file.exists(epi_roc_fn)) {
+    print('making epigenetic annotations')
+    
+
+    
+    sites_mrcs_epigenetic <- annotate_epigenetic(sites_mrcs, annot_ref, histoneorder)
+    sites_to_ROC_ordinary(sites_mrcs_epigenetic,
+                          df_sites_meta[, c("siteID", "sampleName", "refGenome")],
+                          heatmap_epigenetic)
+  }
+  
+  print('making epigenetic heatmap')
+  epi <- heatmap_to_ggplot2(epi_roc_fn, "epigenetic", histoneorder, filter_type, sep_levels)
+  
+  print(gen)
+  print(epi)
+  
+  return("finished")
+}
+
+# settings for heatmaps and files
+annot_ref <- file.path(normalizePath("annot_ref"))
+
+mark_clonal <- function(exp, abund) {
+  clonal <- rep("single", length(abund))
+  
+  clonal[exp == "Acute" & abund >= 3] <- "clonal"
+  clonal[exp == "ART" & abund >= 2] <- "clonal"
+  clonal[exp == "Chronic" & abund >= 2] <- "clonal"
+  
+  return(clonal)
+}
+
+df_pre_mrc <- df_compiled %>%
+  mutate(refGenome = "hg38",
+         type = "insertion",
+         clonal = mark_clonal(exp, abund),
+         position = as.numeric(str_extract(posID, "(?<=[+-])(\\d*$)")))
+```
+
+## FIG 2
+```{r}
+# exp and location and cell
+df_pre_mrc %>%
+  mutate(sampleName = paste(exp, location, cell, sep = "_")) %>%
+  make_heatmaps(annot_ref, "exp_location_cell", c("Stage", "Compartment", "Cell"))
+
+# exp and location and clonal
+df_pre_mrc %>%
+  mutate(sampleName = paste(exp, location, clonal, sep = "_")) %>%
+  make_heatmaps(annot_ref, "exp_location_clonal", c("Stage", "Compartment", "Clonal"))
+```
+
+
+# overall stat counts
+```{r}
+df_compiled %>%
+  group_by(exp) %>%
+  summarise(count = n(),
+            abund = sum(abund))
+
+df_compiled %>%
+  group_by(exp) %>%
+  arrange(abund) %>%
+  top_n(5, abund) %>%
+  dplyr::select(exp, abund, gene_plot, in_gene)
+```
+
+# site annotations
+## FIG 1
+```{r}
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+
+# regular from gr_compiled
+gr_anno <- annotatePeak(gr_compiled, TxDb = txdb, annoDb = "org.Hs.eg.db", overlap = "all")
+
+# decounted to allow for easier chipseeker functions
+gr_long <- df_compiled %>%
+  ungroup() %>%
+  uncount(floor(abund), .id = "uncount_id") %>%
+  makeGRangesFromDataFrame(., keep.extra.columns = TRUE)
+
+gr_long_anno <- annotatePeak(gr_long, TxDb = txdb, annoDb = "org.Hs.eg.db", overlap = "all")
+
+df_anno <- data.frame(gr_anno) %>%
+  mutate(feature = case_when(grepl("Intron", annotation) ~ "Intron",
+    grepl("Distal Intergenic", annotation) ~ "Distal intergenic",
+    grepl("Exon", annotation) ~ "Exon",
+    TRUE ~ "Other")) %>%
+  mutate(feature = factor(feature, levels = rev(c("Intron", "Distal intergenic", "Exon", "Other")))) %>%
+  group_by(exp, location, cell) %>%
+  mutate(group_n = sum(abund)) %>%
+  group_by(exp, location, cell, feature) %>%
+  summarise(percent_feature = sum(abund) / max(group_n) * 100,
+            sum_feature = sum(abund),
+            group_abund = max(group_n)) %>%
+  mutate(x_axis = paste0(gsub(" ", "\n", cell),
+                         "\n(",
+                         group_abund,
+                         ")"),
+         y_pos = cumsum(percent_feature) - 0.5 * percent_feature) %>%
+  ungroup() %>%
+  mutate(exp = factor(exp, levels = c("Acute", "Chronic", "ART")),
+         location = factor(location, levels = c("PBMC", "CLN", "ILN", "Tonsil")))
+
+
+facet_label_clean <- function(labels) {
+  labels <- lapply(labels, as.character)
+  a <- do.call(paste, c(labels, list(sep = " | ")))
+  
+  return(list(a))
+}
+
+# site_annot_graph <- ggplot(df_anno, aes(x = 1.5, y = percent_feature)) +
+#   geom_bar(aes(fill = feature), stat = "identity", width = 0.5) +
+#   labs(fill = "Feature",
+#        y = "% sonic abundance",
+#        x = "Cell subset\n(total sonic abundance)") +
+#   theme_void() +
+#   theme(strip.background = element_rect(fill = "#FFFFFF", colour = "#FFFFFF"),
+#         strip.text = element_text(size = 8),
+#         legend.title = element_text(size = 8),
+#         legend.text = element_text(size = 8),
+#         axis.text = element_blank(),
+#         panel.spacing = unit(0.25, "lines")) +
+#   guides(color = guide_legend(override.aes = list(size = 0.75))) +
+#   coord_polar(theta = "y", start = 0) +
+#   xlim(0.5, 2.5) +
+#   geom_text(aes(y = y_pos, x = 2.25, label = round(percent_feature, digits = 1)), size = 8/.pt) +
+#   geom_text(data = df_anno %>%
+#               group_by(exp, location, cell) %>%
+#               summarise(group_abund = group_abund) %>%
+#               unique(), y = 0, x = 0.5, aes(label = group_abund), size = 8/.pt) +
+#   scale_fill_viridis_d() +
+#   facet_wrap(~ exp * location * cell,
+#              labeller = facet_label_clean)
+
+site_annot_graph <- ggplot(df_anno, aes(x = x_axis, y = percent_feature)) +
+  geom_bar(aes(fill = feature), stat = "identity") +
+  labs(fill = "Feature",
+       y = "% sonic abundance",
+       x = "Cell subset\n(total sonic abundance)") +
+  theme_classic() +
+  theme(strip.background = element_rect(fill = "#FFFFFF", colour = "#FFFFFF"),
+        strip.text = element_text(size = 8),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        axis.text = element_text(size = 8, color = "#000000")) +
+  guides(color = guide_legend(override.aes = list(size = 0.75))) +
+  scale_fill_viridis_d(direction = -1) +
+  facet_grid(~ exp + location,
+             scales = "free_x",
+             space = "free",
+             labeller = facet_label_clean)
+
+
+site_annot_graph
+
+ggsave(filename = "figs/site_annot_subset_v3.svg", plot = site_annot_graph, device = "svg", width = 17, height = 2)
+```
+
+
+# in_gene comparison
+```{r}
+refGenes <- readRDS("reference_hg38.rds")
+refGenes <- refGenes[
+  seqnames(refGenes) %in% paste0("chr", c(1:22, "X", "Y"))
+]
+mod_refGenes <- unlist(GenomicRanges::reduce(split(
+    refGenes, refGenes$name2), min.gapwidth = 100000L))
+mod_refGenes$name <- names(mod_refGenes)
+
+get_loci_id <- function(gr){
+  paste0(seqnames(gr), strand(gr), start(gr), ":", end(gr))
+}
+
+all_in_gene <- findOverlaps(mod_refGenes, gr_compiled, maxgap = 5000, ignore.strand = TRUE)
+
+art_patients <- c("T1", "T2", "T3")
+acute_patients <- c("A1", "A2", "A3")
+chronic_patients <- c("C1", "C2", "C3")
+
+all_stats <- as.data.frame(gr_compiled[subjectHits(all_in_gene)], row.names = NULL) %>%
+  mutate(loci = get_loci_id(mod_refGenes[queryHits(all_in_gene)]),
+    gene_name = as.character(mod_refGenes$name[queryHits(all_in_gene)]),
+    gene_ort = as.character(strand(mod_refGenes[queryHits(all_in_gene)])),
+    gene_width = (width(mod_refGenes$name[queryHits(all_in_gene)]) + 10000) / 1000,
+    strand = as.character(strand)) %>%
+  dplyr::select(loci, gene_name, gene_ort, posID,
+                gene_width, strand, abund, exp, patient_anon_v2) %>%
+  group_by(loci, gene_name, gene_ort, gene_width) %>%
+  summarise(n_patients = n_distinct(patient_anon_v2),
+            acute_n_patients = n_distinct(patient_anon_v2[patient_anon_v2 %in% acute_patients]),
+            art_n_patients = n_distinct(patient_anon_v2[patient_anon_v2 %in% art_patients]),
+            chronic_n_patients = n_distinct(patient_anon_v2[patient_anon_v2 %in% chronic_patients]),
+            n_sites = n_distinct(posID),
+            acute_n_sites = n_distinct(posID[patient_anon_v2 %in% acute_patients]),
+            art_n_sites = n_distinct(posID[patient_anon_v2 %in% art_patients]),
+            chronic_n_sites = n_distinct(posID[patient_anon_v2 %in% chronic_patients]))
+
+compare_enrichment <- function(all_stats, exp_a, exp_b, save=TRUE) {
+  a_df <- df_compiled %>% filter(exp == exp_a)
+  b_df <- df_compiled %>% filter(exp == exp_b)
+  
+  total_a_sites <- length(unique(paste(a_df$patient_anon_v2, a_df$posID)))
+  total_b_sites <- length(unique(paste(b_df$patient_anon_v2, b_df$posID)))
+  
+  a_freq_lbl <- sym(glue("{tolower(exp_a)}_freq"))
+  b_freq_lbl <- sym(glue("{tolower(exp_b)}_freq"))
+  
+  a_pts_lbl <- sym(glue("{tolower(exp_a)}_n_patients"))
+  b_pts_lbl <- sym(glue("{tolower(exp_b)}_n_patients"))
+  
+  a_sites_lbl <- sym(glue("{tolower(exp_a)}_n_sites"))
+  b_sites_lbl <- sym(glue("{tolower(exp_b)}_n_sites"))
+  
+  res <- all_stats %>%
+    dplyr::filter(n_patients > 0) %>%
+    ungroup() %>%
+    mutate(!!a_freq_lbl := !!a_sites_lbl / (gene_width * total_a_sites),
+           !!b_freq_lbl := !!b_sites_lbl / (gene_width * total_b_sites),
+           pct_chg = 100 * (!!b_freq_lbl - !!a_freq_lbl) / !!a_freq_lbl) %>%
+    dplyr::filter(!is.nan(pct_chg)) %>%
+    dplyr::filter(!!a_sites_lbl >= 1 & !!b_sites_lbl >= 1) %>%
+    dplyr::select(gene_name,
+                  !!a_sites_lbl, !!b_sites_lbl,
+                  !!a_pts_lbl, !!b_pts_lbl,
+                  !!a_freq_lbl, !!b_freq_lbl,
+                  pct_chg) %>%
+    arrange(pct_chg)
+  
+  total_a_sites <- sym(glue("total_{tolower(exp_a)}_sites"))
+  total_b_sites <- sym(glue("total_{tolower(exp_b)}_sites"))
+  
+  if (save) {
+    fn <- glue("geneEnrichment/geneEnrichment_{exp_a}vs{exp_b}.tsv")
+    
+    a_sites_name <- sym(glue("# {exp_a} sites"))
+    b_sites_name <- sym(glue("# {exp_b} sites"))
+    a_ind_name <- sym(glue("# {exp_a} individuals"))
+    b_ind_name <- sym(glue("# {exp_b} individuals"))
+    a_freq_name <- sym(glue("{exp_a} Frequency"))
+    b_freq_name <- sym(glue("{exp_b} Frequency"))
+    
+    res %>%
+      dplyr::mutate(pct_chg = round(pct_chg, digits = 2),
+                    !!a_freq_lbl := formatC(!!a_freq_lbl, format = "e", digits = 2),
+                    !!b_freq_lbl := formatC(!!b_freq_lbl, format = "e", digits = 2)) %>%
+      dplyr::rename(`Gene` = gene_name,
+                    !!a_sites_name := !!a_sites_lbl,
+                    !!b_sites_name := !!b_sites_lbl,
+                    !!a_ind_name := !!a_pts_lbl,
+                    !!b_ind_name := !!b_pts_lbl,
+                    !!a_freq_name := !!a_freq_lbl,
+                    !!b_freq_name := !!b_freq_lbl,
+                    `% Change` = pct_chg) %>%
+      write.table(file = fn,
+                  col.names = TRUE, row.names = FALSE,
+                  quote = FALSE, sep = "\t")
+  }
+
+  return(res)
+}
+
+compare_enrichment(all_stats, "Acute", "ART")
+compare_enrichment(all_stats, "Acute", "Chronic")
+compare_enrichment(all_stats, "Chronic", "ART")
+```
+
+
+# fisher test for proportion of clones
+```{r}
+calc_sig_n_clones <- function(stage) {
+  exp_compiled <- df_compiled %>%
+    mutate(clone = ifelse(exp == "Acute", abund >= 3, abund >= 2)) %>%
+    dplyr::filter(exp == stage) %>%
+    group_by(patient_anon_v2, location) %>%
+    summarise(total_clones = sum(clone),
+              total_nonclones = sum(!clone)) %>%
+    ungroup() %>%
+    group_by(location) %>%
+    summarise(clones = sum(total_clones),
+              nonclones = sum(total_nonclones))
+
+  exp_mat <- t(as.matrix(exp_compiled[c(1:nrow(exp_compiled)), c(2:3)]))
+  colnames(exp_mat) <- as_vector(exp_compiled[, 1])
+  
+  print(exp_mat)
+  return(fisher.test(exp_mat))
+}
+
+calc_sig_n_clones("ART")
+calc_sig_n_clones("Acute")
+calc_sig_n_clones("Chronic")
+```
+
+# look at position of nearest neighbor integration site on chromosome
+```{r}
+find_nn_dist <- function(start) {
+  nn_dist <- sapply(seq_along(start), function(i) {
+    if (i == 1) {
+      neighbor <- start[i + 1]
+    } else if (i == length(start)) {
+      neighbor <- start[length(start) - 1]
+    } else {
+      pre <- start[i + 1]
+      post <- start[i - 1]
+      
+      neighbor <- ifelse(abs(pre - start[i]) < abs(post - start[i]),
+                         pre,
+                         post)
+    }
+    return(abs(start[i] - neighbor))
+  })
+  
+  return(nn_dist)
+}
+
+df_compiled %>%
+  dplyr::filter(exp == "ART") %>%
+  group_by(patient_anon, seqnames) %>%
+  arrange(start, .by_group = TRUE) %>%
+  mutate(neighbor = find_nn_dist(start)) %>%
+  dplyr::filter(neighbor < 100) %>%
+  ggplot(aes(x = neighbor)) +
+  stat_ecdf(geom = "step") +
+  facet_wrap(~ seqnames, scales = "free") +
+  theme_classic()
+```
+
+
+# gene annotation
+## SUP FIGS
+```{r}
+get_unique_ingene <- function(df, .filter_crit, .group_var, fn) {
+  .filter_crit <- enquo(.filter_crit)
+  .group_var <- enquo(.group_var)
+  
+  genes <- df %>%
+    dplyr::filter(!!.filter_crit & in_gene != "FALSE") %>%
+    group_by(!!.group_var) %>%
+    summarize(res = str_c(unique(in_gene), collapse = ","))
+  
+  write.table(genes,
+              file = glue("gene_annots/{fn}"),
+              sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
+  
+  return(genes)
+}
+
+get_unique_ingene(df_compiled, exp == "Acute", location, "acute_by_loc.tsv")
+get_unique_ingene(df_compiled, exp == "Chronic", location, "chronic_by_loc.tsv")
+get_unique_ingene(df_compiled, exp == "ART", location, "art_by_loc.tsv")
+```
+
+
+# rnaseq_comparison
+```{r}
+# tfh from human ln
+# https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE130793
+library(DESeq2)
+
+vella_rnaseq <- read.table("rnaseq/GSE130793_LVRNAseq_CD4_gene_counts.txt", header = TRUE)
+
+parse_vella_rnaseq <- function(raw_matrix, ...) {
+  col_ids <- enquos(...)
+  
+  rnaseq <- raw_matrix %>%
+    dplyr::select(id, geneSymbol, !!!col_ids)
+  
+  rnaseq_matrix <- as.matrix(rnaseq[, c(3:ncol(rnaseq))])
+  rownames(rnaseq_matrix) <- rnaseq$id
+  
+  col_data <- data.frame(name = colnames(rnaseq)[c(3:5)])
+  rownames(col_data) <- col_data$name
+  
+  dds <- DESeqDataSetFromMatrix(countData = rnaseq_matrix,
+                                colData = col_data,
+                                design = ~ 1)
+  
+  dds <- DESeq(dds)
+  dds_counts <- as.data.frame(counts(dds, normalized = T))
+  dds_counts$id <- rownames(dds_counts)
+  
+  counts <- dds_counts %>%
+    rowwise() %>%
+    dplyr::mutate(avg_exp = mean(c(!!!col_ids), na.omit = TRUE)) %>%
+    left_join(rnaseq[, c("id", "geneSymbol")], by = "id", keep = FALSE) %>%
+    ungroup() %>%
+    mutate(bin = ntile(avg_exp, 10),
+           geneSymbol = as.character(geneSymbol))
+  
+  return(counts)
+}
+
+get_genes_by_cell <- function(df, .filter_crit) {
+  # .filter_crit <- enquo(.filter_crit)
+  
+  genes <- toString((df %>%
+    dplyr::filter(in_gene != "FALSE") %>%
+    dplyr::filter_(.filter_crit) %>%
+    dplyr::select(in_gene))$in_gene)
+
+  genes <- gsub(" ", "", genes)
+  genes <- unlist(str_split(genes, pattern = ","))
+  
+  genes_df <- data.frame(geneSymbol = genes,
+                         stringsAsFactors = FALSE)
+  
+  return(genes_df)
+}
+
+plot_tx_bins <- function(df, bins, title) {
+  df_graph <- df %>%
+    left_join(bins[, c("id", "geneSymbol", "bin")], by = "geneSymbol") %>%
+    mutate(bin = ifelse(is.na(bin), "NA", bin),
+           bin = factor(as.character(bin), levels = c("NA", as.character(1:10)))) %>%
+    group_by(bin) 
+  
+  df_graph %>%
+    summarise(freq = n() / nrow(.)) %>%
+    ggplot(aes(x = bin, y = freq)) +
+    geom_bar(stat = "identity", fill = "#000000", width = 0.8) +
+    scale_x_discrete(drop = FALSE) +
+    labs(title = title) +
+    theme_classic() +
+    theme(plot.title = element_text(hjust = 0.5, size = 9),
+          axis.title = element_blank())
+}
+
+tfh_bins <- parse_vella_rnaseq(vella_rnaseq, A_1, B_1, C_1)
+nontfh_bins <- parse_vella_rnaseq(vella_rnaseq, A2, B2, C2)
+
+tx_wrapper <- function(df, .crit, bins, title) {
+  # .crit <- enquo(.crit)
+  
+  genes_df <- get_genes_by_cell(df, .crit)
+  
+  return(plot_tx_bins(genes_df, bins, title))
+}
+
+
+tx_wrapper(df_compiled, 'cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh"', tfh_bins, "GC-Tfh")
+
+filter_crit <- c('cell == "GC-Tfh" | cell == "HLA-DR- GC-Tfh"',
+                 'cell == "CD69+" | cell == "HLA-DR- CD69+"',
+                 'cell == "CD69-" | cell == "HLA-DR- CD69-"',
+                 'cell == "Tcm" | cell == "CD69- Tcm"',
+                 'cell == "Tem" | cell == "CD69- Tem"')
+
+titles <- c("HLA-DR- GC-Tfh | GC-Tfh",
+            "HLA-DR- CD69+ | CD69+",
+            "HLA-DR- CD69- | CD69-",
+            "CD69- Tcm | Tcm",
+            "CD69- Tem | Tem")
+
+tfh_tx_plots <- lapply(seq_along(filter_crit), function(i) {
+  plot <- tx_wrapper(df_compiled, filter_crit[i], tfh_bins, titles[i])
+  return(plot)
+})
+
+nontfh_tx_plots <- lapply(seq_along(filter_crit), function(i) {
+  plot <- tx_wrapper(df_compiled, filter_crit[i], nontfh_bins, titles[i])
+  return(plot)
+})
+
+tfh <- ggarrange(plots = tfh_tx_plots, ncol = 3)
+nontfh <- ggarrange(plots = nontfh_tx_plots, ncol = 3)
+
+ggsave("figs/tx_comp_tfh.svg", plot = tfh,
+       device = "svg", units = "in", width = 7, height = 3)
+
+ggsave("figs/tx_comp_nontfh.svg", plot = nontfh,
+       device = "svg", units = "in", width = 7, height = 3)
+```
+
+
+# revision, stage comparisons
+```{r}
+# set ids
+df_anno <- data.frame(gr_anno) %>%
+  mutate(annotation = str_remove(annotation, " \\(ENST.*\\)"),
+         annotation = ifelse(grepl("Intron$", annotation), "Intron", annotation),
+         annotation = ifelse(grepl("Exon$", annotation), "Exon", annotation))
+
+df_compiled_anno <- data.frame(gr_long_anno) %>%
+  mutate(annotation = str_remove(annotation, " \\(ENST.*\\)"),
+         annotation = ifelse(grepl("Intron$", annotation), "Intron", annotation),
+         annotation = ifelse(grepl("Exon$", annotation), "Exon", annotation))
+
+# look at distribution on chromosome
+chr_lengths <- read.csv("chr_lengths.csv")
+chr_lengths <- setNames(as.numeric(chr_lengths$length), chr_lengths$chr)
+
+df_compiled_anno %>%
+  mutate(chrom = str_match(string = seqnames, pattern = "(?<=chr).*"),
+         chr_rel = start / chr_lengths[chrom]) %>%
+  ggplot(aes(x = chr_rel, after_stat(density), color = exp)) +
+  geom_freqpoly(binwidth = 0.01) +
+  theme_classic() +
+  labs(color = "Infection stage",
+       x = "Normalized chromosomal position",
+       y = "Density") +
+  ggsave(filename = "figs/rel_chr_loc.svg", device = "svg", width = 6, height = 2)
+
+# overall distribution
+df_anno %>%
+  group_by(annotation) %>%
+  summarize(total_abund = sum(abund)) %>%
+  ungroup() %>%
+  mutate(total_prop = total_abund / sum(total_abund) * 100)
+
+
+lg_panel_style <- list(
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 100)),
+  theme_classic(),
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        legend.position = "bottom",
+        strip.background = element_rect(color = "#ffffff"))
+)
+
+# by infection stage
+df_anno %>%
+  group_by(patient_anon_v2, exp, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  # ggpubr::compare_means(formula = annotation_prop ~ exp, data = ., group.by = "annotation")
+  ggplot(aes(x = annotation, y = annotation_prop, group = exp)) +
+  geom_bar(aes(fill = exp), stat = "summary", fun = "mean", position = position_dodge2(preserve = "single")) +
+  geom_point(position = position_dodge(width = 0.9)) +
+  lg_panel_style +
+  labs(x = "Annotation",
+       y = "Proportion of sites (%)",
+       fill = "Infection stage") +
+  ggsave(filename = "figs/gene_annot_all_exp.svg", device = "svg", width = 8.5, height = 4)
+
+
+# by blood vs tissue
+df_anno %>%
+  mutate(location2 = ifelse(location == "PBMC", "Blood", "Tissue")) %>%
+  group_by(patient_anon_v2, exp, location2, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2, exp, location2) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  ggplot(aes(x = annotation, y = annotation_prop, group = location2)) +
+  geom_bar(aes(fill = location2), stat = "summary", fun = "mean",
+           position = position_dodge2(preserve = "single")) +
+  geom_point(position = position_dodge(width = 0.9)) +
+  facet_wrap(~ exp) +
+  lg_panel_style +
+  labs(x = "Annotation",
+       y = "Proportion of sites (%)",
+       fill = "Compartment") +
+  ggsave(filename = "figs/gene_annot_all_compartment.svg", device = "svg", width = 8.5, height = 4)
+
+
+# by residency
+df_anno %>%
+  mutate(resident = grepl("(GC-Tfh|CD69\\+)", cell)) %>%
+  mutate(resident_detailed = ifelse(resident,
+                           "Resident\n(CD69+ or GC-Tfh phenotypes)",
+                           "Non-resident")) %>%
+  group_by(patient_anon_v2, exp, resident_detailed, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2, exp, resident_detailed) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  ggplot(aes(x = annotation, y = annotation_prop, group = resident_detailed)) +
+  geom_bar(aes(fill = resident_detailed), stat = "summary", fun = "mean",
+           position = position_dodge2(preserve = "single")) +
+  geom_point(position = position_dodge(width = 0.9)) +
+  facet_wrap(~ exp) +
+  lg_panel_style +
+  labs(x = "Annotation",
+       y = "Proportion of sites (%)",
+       fill = "Cell phenotype") +
+  ggsave(filename = "figs/gene_annot_all_res.svg", device = "svg", width = 8.5, height = 4)
+
+
+plot_by_infection_stage <- function(df, .grouping_var) {
+  .grouping_var <- enquo(.grouping_var)
+  
+  g_list <- by(data = df, INDICES = df$exp, FUN = function(sm_df) {
+      sm_df <- droplevels(sm_df)
+      g <- sm_df %>%
+        ggplot(aes(x = annotation, y = annotation_prop, group = !!.grouping_var)) +
+        geom_bar(aes(fill = !!.grouping_var), stat = "summary", fun = "mean",
+                 position = position_dodge2(preserve = "single")) +
+        geom_point(aes(color = cell), position = position_dodge(width = 0.9)) +
+        theme_classic() +
+        scale_y_continuous(expand = c(0, 0), limits = c(0, 110)) +
+        theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+              legend.title = element_blank(),
+              legend.text = element_text(size = 7),
+              legend.position = "bottom",
+              axis.title.x = element_text(size = 8),
+              axis.title.y = element_text(size = 8)) +
+        scale_fill_manual(values = c("#000000", "#cccccc"), guide = "none") +
+        guides(color = guide_legend(ncol = 3)) +
+        labs(x = "Annotation",
+             y = "Proportion of sites (%)",
+             fill = "Compartment",
+             color = "Cell") +
+        ggpubr::stat_compare_means(hide.ns = TRUE,
+                                   method = "wilcox.test",
+                                   label = "p.signif",
+                                   label.y.npc = "center",
+                                   size = 8)
+      
+      return(g)
+  })
+  
+  return(g_list)
+}
+
+df_anno %>%
+  mutate(location2 = ifelse(location == "PBMC", "Blood", "Tissue"),
+         annotation = ifelse(!annotation %in% c("Intron", "Distal Intergenic"), "Other", annotation),
+         annotation = factor(annotation, levels = c("Intron", "Distal Intergenic", "Other"))) %>%
+  group_by(patient_anon_v2, exp, location2, cell, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2, location2, cell) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100)
+  # ggpubr::compare_means(formula = annotation_prop ~ location2, data = ., group.by = c("exp", "annotation")) %>%
+  # View()
+  plot_by_infection_stage(., location2) %>%
+  patchwork::wrap_plots() %>%
+  ggsave(filename = "figs/gene_annot_loc.svg", device = "svg", width = 7, height = 4)
+
+df_anno %>%
+  mutate(resident = grepl("(GC-Tfh|CD69\\+)", cell)) %>%
+  mutate(resident_detailed = ifelse(resident,
+                           "Resident\n(CD69+ or GC-Tfh phenotypes)",
+                           "Non-resident"),
+         annotation = ifelse(!annotation %in% c("Intron", "Distal Intergenic"), "Other", annotation),
+         annotation = factor(annotation, levels = c("Intron", "Distal Intergenic", "Other"))) %>%
+  group_by(patient_anon_v2, exp, resident_detailed, cell, annotation) %>%
+  summarize(annotation_count = sum(abund)) %>%
+  ungroup() %>%
+  group_by(patient_anon_v2, resident_detailed, cell) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  ggpubr::compare_means(formula = annotation_prop ~ resident_detailed, data = ., group.by = c("exp", "annotation")) %>%
+  View()
+  plot_by_infection_stage(., resident_detailed) %>%
+  patchwork::wrap_plots() %>%
+  ggsave(filename = "figs/gene_annot_res.svg", device = "svg", width = 7, height = 4)
+```
+
+

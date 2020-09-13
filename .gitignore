@@ -1,0 +1,16 @@
+.DS_Store/
+.DS_Store
+.vscode/
+
+geo_rnaseq.txt
+
+cn_code/
+data/
+figs/
+.RData
+.Rhistory
+heatmaps/
+annot_ref/
+raw_rds
+old_rds
+metadata/

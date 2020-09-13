@@ -1,0 +1,162 @@
+---
+title: "hiv_rds_compiler"
+author: "Vincent Wu"
+date: "1/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(GenomicRanges)
+library(hiAnnotator)
+
+source("scripts/hiv_int_helper_fx.R")
+```
+
+```{r}
+ref <- make_ref("reference_hg38.rds")
+
+raw_xofil_rds_fns <- list.files("raw_rds/", pattern = ".rds$", full.names = TRUE)
+raw_rds_names <- NULL
+  
+fns_meta <- str_match(raw_xofil_rds_fns,
+                      "raw_rds//(.*)_standardized_uniq_sites_(\\d).rds$")
+rds_list_names <- paste0(fns_meta[, 2], "_", fns_meta[, 3])
+
+raw_xofil_rdss <- lapply(raw_xofil_rds_fns, function(x) {
+  return(readRDS(x)$fil_uniq_sites)
+})
+
+names(raw_xofil_rdss) <- rds_list_names
+```
+
+```{r}
+# fix art_1
+parse_art_1 <- function(gr) {
+  df <- data.frame(gr) %>%
+    mutate(samplename = gsub("^sample", "", samplename)) %>%
+    separate(samplename, sep = "-", into = c("main_id", "primer_id", "rep_id")) %>%
+    mutate(rep_id = as.numeric(rep_id),
+           rep_id = (rep_id - 1) %% 4 + 1)
+  
+  return(df)
+}
+
+parse_art_5 <- function(gr) {
+  df <- data.frame(gr) %>%
+    separate(samplename, sep = "-",
+             into = c("main_id", "primer_id", "rep_id"),
+             remove = TRUE)
+  
+  return(df)
+}
+
+parse_acute <- function(gr) {
+  df <- data.frame(gr) %>%
+    separate(samplename, sep = "-",
+             into = c("main_id", "primer_id", "rep_id"),
+             remove = TRUE)
+  
+  return(df)
+}
+
+parse_chronic <- function(gr) {
+  df <- data.frame(gr) %>%
+    separate(samplename, sep = "-", into = c("main_id", "temp"), remove = TRUE) %>%
+    separate(temp, sep = "_", into = c("rep_id", "primer_id"), remove = TRUE)
+  
+  return(df)
+}
+  
+```
+
+
+```{r}
+xofil_dfs <- lapply(seq_along(raw_xofil_rdss), function(i) {
+  name <- rds_list_names[i]
+  rds <- raw_xofil_rdss[[i]]
+  
+  print(name)
+  
+  if (name == "art_1") {
+    df <- parse_art_1(rds)
+  } else if (name == "art_5") {
+    df <- parse_art_5(rds)
+  } else if (startsWith(name, prefix = "acute")) {
+    df <- parse_acute(rds)
+  } else {
+    df <- parse_chronic(rds)
+  }
+  
+  df <- df %>%
+    mutate(rep_id = as.numeric(rep_id),
+           seqnames = as.character(seqnames),
+           run = name)
+  
+  print(dim(df))
+  control_hits <- grepl("UninfectedControl", df$main_id)
+  if (sum(control_hits) > 0) {
+    print("Hits detected")
+    
+    print(df[control_hits, ])
+    
+    df <- df[!control_hits, ]
+  }
+
+  df$new_posid <- sapply(seq_along(df$posid),
+                         find_bp,
+                         df = df)
+
+  df <- df %>%
+    arrange(run, main_id, rep_id, primer_id) %>%
+    group_by(run, main_id, new_posid, rep_id) %>%
+    summarise(abund = calc_abund(tolower(primer_id), new_posid)) %>%
+    ungroup() %>%
+    group_by(run, main_id, new_posid) %>%
+    summarise(total_abund = sum(abund))
+
+  return(df)
+})
+
+xofil_df <- bind_rows(xofil_dfs)
+```
+
+```{r}
+xofil_df <- xofil_df %>%
+  tidyr::extract(new_posid, c("seqname", "strand", "start"),
+                 "(chr[\\dMXY]*)([+-])(\\d*)",
+                 remove = FALSE) %>%
+  mutate(start = as.numeric(start),
+         width = 1)
+
+gr <- GRanges(
+  seqnames = xofil_df$seqname,
+  ranges = IRanges(start = xofil_df$start,
+                   end = xofil_df$start,
+                   width = xofil_df$width),
+  strand = xofil_df$strand,
+  seqinfo = seqinfo(ref))
+
+gr$run <- xofil_df$run
+gr$main_id <- xofil_df$main_id
+gr$posID <- xofil_df$new_posid
+gr$abund <- xofil_df$total_abund
+
+gr <- getSitesInFeature(gr, ref, "in_gene")
+gr <- getNearestFeature(gr, ref, "nearest_gene")
+```
+
+```{r}
+sample_codes <- read.csv("metadata/sample_codes.csv", stringsAsFactors = FALSE)
+
+df_compiled <- data.frame(gr) %>%
+  left_join(sample_codes, by = c("run", "main_id")) %>%
+  dplyr::select(-patient)
+
+saveRDS(df_compiled, file = "data/df_compiled.rds")
+```
+

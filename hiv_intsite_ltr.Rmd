@@ -1,0 +1,109 @@
+---
+title: "hiv_intsite_compiled"
+author: "Vincent Wu"
+date: "10/3/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load pkgs
+```{r, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(tidyverse)
+
+library(ape)
+library(phangorn)
+```
+
+```{r}
+uniq_sites_dir <- "data/"
+uniq_sites_fn <- list.files(path = uniq_sites_dir,
+                            pattern = "^unique_sites.*.csv")
+
+process_uniq_sites <- function(fn) {
+  fn_complete <- paste(uniq_sites_dir, fn, sep = "")
+  
+  f <- read.csv(fn_complete, stringsAsFactors = FALSE) %>%
+    mutate(primer = ifelse(grepl("U3", sampleName), "U3", "U5"))
+  
+  f$new_posid <- sapply(seq_along(f$seqnames), find_bp, df = f)
+  
+  # write.csv(x = f,
+  #           file = paste(uniq_sites_dir, "proc_", fn, sep = ""),
+  #           quote = FALSE,
+  #           row.names = FALSE)
+  
+  return(f)
+}
+
+uniq_sites <- lapply(uniq_sites_fn, function(i) {process_uniq_sites(i)})
+
+write.csv(bind_rows(uniq_sites),
+          file = "data/comb_proc_unique_sites_acute.csv",
+          row.names = FALSE,
+          quote = FALSE)
+```
+
+# load and merge data files
+```{r}
+data_dir <- "~/Box/thesis_lab/exp/integration_site_6/analysis/data/"
+sites_rds <- list.files(path = data_dir,
+                        pattern = "standardized_uniq_sites.rds$",
+                        recursive = TRUE)
+
+process_rds <- function(fn, run_n) {
+  raw_xofil_df <- readRDS(paste(data_dir, fn, sep = ""))$fil_uniq_sites %>%
+    data.frame() %>%
+    separate(samplename, sep = "-", into = c("main_id", "primer_id", "rep_id"), remove = FALSE) %>%
+    mutate(rep_id = as.numeric(rep_id),
+           seqnames = as.character(seqnames))
+  
+  raw_xofil_df$new_posid <- sapply(seq_along(raw_xofil_df$posid),
+                                   find_bp,
+                                   df = raw_xofil_df)
+  raw_xofil_df$run <- run_n
+  
+  raw_xofil_df <- raw_xofil_df %>%
+    arrange(samplename)
+  
+  return(raw_xofil_df)
+}
+
+sites_df <- lapply(seq_along(sites_rds), function(i) {process_rds(sites_rds[i], i)})
+
+raw_xofil_df <- bind_rows(sites_df)
+
+write.csv(raw_xofil_df,
+          file = "data/raw_xofil_df_acute.csv",
+          row.names = FALSE,
+          quote = FALSE)
+```
+
+
+```{r}
+ltrs <- read.dna(file = "ltr_only_u5.fa", format = "fasta")
+ltrs_phydat <- phyDat(ltrs, type = "DNA")
+
+ltrs_smol <- subset(ltrs_phydat, 1:50)
+# model <- modelTest(ltrs_smol)
+
+# choosing on smallest bic
+# bestmodel <- model$Model[which.min(model$BIC)]
+dna_dist <- dist.ml(ltrs_phydat, model = "JC69")
+tree <- NJ(dna_dist)
+
+fit <- pml(tree, ltrs_phydat)
+fitJC <- optim.pml(fit, model = "JC", rearrangement = "stochastic")
+
+logLik(fitJC)
+bs <- bootstrap.pml(fitJC, bs=100, optNni=TRUE, multicore=TRUE, control = pml.control(trace=0))
+plotBS(midpoint(fitJC$tree), bs, p = 50, type="p")
+
+write.tree(bs, file="bootstrap_example.tre")
+
+plot(tree)
+```
+
