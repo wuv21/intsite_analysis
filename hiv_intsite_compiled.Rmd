@@ -575,12 +575,13 @@ make_clonal_expansion_graph <- function(df, p, exp_type) {
   
   g <- ggplot(df_rel, aes(x = x_axis, y = rel_abund, fill = gene_plot_2)) +
     geom_bar(stat = "identity") +
-    geom_text(aes(label = plot_lbl), size = 2.5, position = position_stack(vjust = 0.5)) +
+    geom_text(aes(label = plot_lbl), size = 8/.pt, position = position_stack(vjust = 0.5)) +
     theme_classic() +
     theme(panel.grid.major.x = element_blank(),
           panel.grid.minor.x = element_blank(),
+          text = element_text(size = 8),
           legend.title = element_blank(),
-          legend.text = element_text(size = 6),
+          legend.text = element_text(size = 8),
           legend.position = "right") +
     guides(fill = guide_legend(override.aes = list(size = 1),
                            ncol = legend_ncol)) +
@@ -625,22 +626,9 @@ save_rel_abund_graphs("T", "art")
 save_rel_abund_graphs("A", "acute")
 save_rel_abund_graphs("C", "chronic")
 
-# art_rel_abund <- cowplot::plot_grid(clonal_graphs[["T1"]], clonal_graphs[["T2"]], clonal_graphs[["T3"]], ncol = 1, align = "h")
-# cowplot::save_plot("figs/rel_abund_art.svg", art_rel_abund, base_width = NULL, base_height = 25, device = "svg")
-# 
-# acute_rel_abund <- cowplot::plot_grid(clonal_graphs[["A1"]], clonal_graphs[["A2"]], clonal_graphs[["A3"]], ncol = 1, align = "h")
-# cowplot::save_plot("figs/rel_abund_acute.svg",
-#                    acute_rel_abund, base_width = NULL, base_height = 25, device = "svg")
-# 
-# chronic_rel_abund <- cowplot::plot_grid(clonal_graphs[["C1"]], clonal_graphs[["C2"]], clonal_graphs[["C3"]], ncol = 1, align = "h")
-# cowplot::save_plot("figs/rel_abund_chronic.svg",
-#                    chronic_rel_abund, base_width = NULL,
-#                    base_height = 25, device = "svg")
-
-
-saveRDS(art_rel_abund, glue("{fig_rds_prefix}/art_rel_abund.rds"))
-saveRDS(acute_rel_abund, glue("{fig_rds_prefix}/acute_rel_abund.rds"))
-saveRDS(chronic_rel_abund, glue("{fig_rds_prefix}/chronic_rel_abund.rds"))
+# saveRDS(art_rel_abund, glue("{fig_rds_prefix}/art_rel_abund.rds"))
+# saveRDS(acute_rel_abund, glue("{fig_rds_prefix}/acute_rel_abund.rds"))
+# saveRDS(chronic_rel_abund, glue("{fig_rds_prefix}/chronic_rel_abund.rds"))
 ```
 
 # circos plot
@@ -844,7 +832,6 @@ df_pre_mrc <- df_compiled %>%
 ```
 
 ## FIG 2
-
 ```{r}
 # exp and location and cell
 df_pre_mrc %>%
@@ -874,9 +861,7 @@ df_compiled %>%
 
 # site annotations
 ## FIG 1
-
 ```{r}
-covplot(gr_compiled, title = "Integration site distribution over chromosome")
 txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
 
 # regular from gr_compiled
@@ -890,24 +875,12 @@ gr_long <- df_compiled %>%
 
 gr_long_anno <- annotatePeak(gr_long, TxDb = txdb, annoDb = "org.Hs.eg.db", overlap = "all")
 
-pdf(glue("figs/upsetplot_general.pdf"), onefile = FALSE, width = 6, height = 4)
-upsetplot(gr_long_anno)
-dev.off()
-
-pdf(glue("figs/annopie_general.pdf"), onefile = FALSE, width = 6, height = 4)
-plotAnnoPie(gr_long_anno)
-dev.off()
-
-pdf(glue("figs/distTSS_general.pdf"), onefile = FALSE, width = 6, height = 4)
-plotDistToTSS(gr_long_anno)
-dev.off()
-
 df_anno <- data.frame(gr_anno) %>%
   mutate(feature = case_when(grepl("Intron", annotation) ~ "Intron",
     grepl("Distal Intergenic", annotation) ~ "Distal intergenic",
     grepl("Exon", annotation) ~ "Exon",
     TRUE ~ "Other")) %>%
-  mutate(feature = factor(feature, levels = c("Intron", "Distal intergenic", "Exon", "Other"))) %>%
+  mutate(feature = factor(feature, levels = rev(c("Intron", "Distal intergenic", "Exon", "Other")))) %>%
   group_by(exp, location, cell) %>%
   mutate(group_n = sum(abund)) %>%
   group_by(exp, location, cell, feature) %>%
@@ -917,10 +890,12 @@ df_anno <- data.frame(gr_anno) %>%
   mutate(x_axis = paste0(gsub(" ", "\n", cell),
                          "\n(",
                          group_abund,
-                         ")")) %>%
+                         ")"),
+         y_pos = cumsum(percent_feature) - 0.5 * percent_feature) %>%
   ungroup() %>%
   mutate(exp = factor(exp, levels = c("Acute", "Chronic", "ART")),
          location = factor(location, levels = c("PBMC", "CLN", "ILN", "Tonsil")))
+
 
 facet_label_clean <- function(labels) {
   labels <- lapply(labels, as.character)
@@ -929,24 +904,52 @@ facet_label_clean <- function(labels) {
   return(list(a))
 }
 
-site_annot_graph <- ggplot(df_anno, aes(x = x_axis, y = percent_feature, fill = feature)) +
-  geom_col(position = position_dodge2(preserve = "single")) +
+# site_annot_graph <- ggplot(df_anno, aes(x = 1.5, y = percent_feature)) +
+#   geom_bar(aes(fill = feature), stat = "identity", width = 0.5) +
+#   labs(fill = "Feature",
+#        y = "% sonic abundance",
+#        x = "Cell subset\n(total sonic abundance)") +
+#   theme_void() +
+#   theme(strip.background = element_rect(fill = "#FFFFFF", colour = "#FFFFFF"),
+#         strip.text = element_text(size = 8),
+#         legend.title = element_text(size = 8),
+#         legend.text = element_text(size = 8),
+#         axis.text = element_blank(),
+#         panel.spacing = unit(0.25, "lines")) +
+#   guides(color = guide_legend(override.aes = list(size = 0.75))) +
+#   coord_polar(theta = "y", start = 0) +
+#   xlim(0.5, 2.5) +
+#   geom_text(aes(y = y_pos, x = 2.25, label = round(percent_feature, digits = 1)), size = 8/.pt) +
+#   geom_text(data = df_anno %>%
+#               group_by(exp, location, cell) %>%
+#               summarise(group_abund = group_abund) %>%
+#               unique(), y = 0, x = 0.5, aes(label = group_abund), size = 8/.pt) +
+#   scale_fill_viridis_d() +
+#   facet_wrap(~ exp * location * cell,
+#              labeller = facet_label_clean)
+
+site_annot_graph <- ggplot(df_anno, aes(x = x_axis, y = percent_feature)) +
+  geom_bar(aes(fill = feature), stat = "identity") +
   labs(fill = "Feature",
        y = "% sonic abundance",
        x = "Cell subset\n(total sonic abundance)") +
   theme_classic() +
   theme(strip.background = element_rect(fill = "#FFFFFF", colour = "#FFFFFF"),
-        strip.text = element_text(face = "bold", size = 10),
-        legend.title = element_text(size = 10),
+        strip.text = element_text(size = 8),
+        legend.title = element_text(size = 8),
         legend.text = element_text(size = 8),
-        axis.text.x = element_text(size = 8)) +
+        axis.text = element_text(size = 8, color = "#000000")) +
   guides(color = guide_legend(override.aes = list(size = 0.75))) +
-  facet_wrap(~ exp + location,
+  scale_fill_viridis_d(direction = -1) +
+  facet_grid(~ exp + location,
              scales = "free_x",
+             space = "free",
              labeller = facet_label_clean)
 
-saveRDS(site_annot_graph, glue("{fig_rds_prefix}/site_annot_graph.rds"))
-ggsave(filename = "figs/site_annot_subset.svg", plot = site_annot_graph, device = "svg", width = 9, height = 6)
+
+site_annot_graph
+
+ggsave(filename = "figs/site_annot_subset_v3.svg", plot = site_annot_graph, device = "svg", width = 17, height = 2)
 ```
 
 
@@ -987,16 +990,6 @@ all_stats <- as.data.frame(gr_compiled[subjectHits(all_in_gene)], row.names = NU
             acute_n_sites = n_distinct(posID[patient_anon_v2 %in% acute_patients]),
             art_n_sites = n_distinct(posID[patient_anon_v2 %in% art_patients]),
             chronic_n_sites = n_distinct(posID[patient_anon_v2 %in% chronic_patients]))
-
-# acute_df <- df_compiled %>% filter(exp == "Acute")
-# art_df <- df_compiled %>% filter(exp == "ART")
-# chronic_df <- df_compiled %>% filter(exp == "Chronic")
-# 
-# total_acute_sites <- length(unique(paste(acute_df$patient_anon_v2, acute_df$posID)))
-# total_art_sites <- length(unique(paste(art_df$patient_anon_v2, art_df$posID)))
-# total_chronic_sites <- length(unique(paste(chronic_df$patient_anon_v2, chronic_df$posID)))
-# 
-# total_pat_sites <- length(unique(paste(df_compiled$patient, df_compiled$posID)))
 
 compare_enrichment <- function(all_stats, exp_a, exp_b, save=TRUE) {
   a_df <- df_compiled %>% filter(exp == exp_a)
@@ -1093,8 +1086,6 @@ calc_sig_n_clones("ART")
 calc_sig_n_clones("Acute")
 calc_sig_n_clones("Chronic")
 ```
-
-
 
 # look at position of nearest neighbor integration site on chromosome
 ```{r}
@@ -1426,7 +1417,7 @@ df_anno %>%
   summarize(annotation_count = sum(abund)) %>%
   ungroup() %>%
   group_by(patient_anon_v2, location2, cell) %>%
-  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100) %>%
+  mutate(annotation_prop = annotation_count / sum(annotation_count) * 100)
   # ggpubr::compare_means(formula = annotation_prop ~ location2, data = ., group.by = c("exp", "annotation")) %>%
   # View()
   plot_by_infection_stage(., location2) %>%
